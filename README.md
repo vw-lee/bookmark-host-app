@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 154 passing across 11 files |
+| Tests | 164 passing across 12 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
@@ -624,6 +624,8 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 
 * [x] **2a.** Quick-add modal — keyboard-driven, URL-first, tag autocomplete.
 * [x] **2b.** Edit and delete (delete writes a tombstone, never removes the record).
+  Editing expands inline rather than opening a modal — it keeps list context and avoids a
+  focus trap. Archive/restore included; archived records stay in the file.
 * [x] **2c.** Write queue: single in-flight, 3 s debounce, batched commits.
 * [x] **2d.** Backoff honouring `Retry-After` / `x-ratelimit-reset` — the queue parks until
   the reset and resumes on its own, with a countdown in the status bar.

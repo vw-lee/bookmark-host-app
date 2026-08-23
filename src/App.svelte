@@ -134,6 +134,12 @@
 
       <button
         class="text-xs text-[var(--color-ink-soft)] underline"
+        onclick={() => (store.showArchived = !store.showArchived)}
+      >
+        {store.showArchived ? "Hide archived" : "Show archived"}
+      </button>
+      <button
+        class="text-xs text-[var(--color-ink-soft)] underline"
         onclick={() => (ioOpen = true)}
       >
         Import
@@ -203,10 +209,7 @@
                 {bookmark}
                 onTag={(tag) => (store.selectedTag = tag)}
                 onDelete={(id) => store.deleteBookmark(id)}
-                onTogglePin={(id) =>
-                  store.updateBookmark(id, {
-                    pinned: !store.file.bookmarks.find((b) => b.id === id)?.pinned,
-                  })}
+                onUpdate={(id, patch) => store.updateBookmark(id, patch)}
               />
             {/each}
           {/if}
