@@ -239,7 +239,50 @@ Actions-based enrichment. Default is **off**.
 
 ---
 
-## 6. Phase 0 — Foundations
+## 6. Background Execution & Platform Limits
+
+The app **never runs continuously in the background**. Leaving it means Android (or any OS)
+freezes the page and may kill it outright under memory pressure. The only thing that survives
+is the service worker, which is event-driven: it wakes for a registered event, gets tens of
+seconds of execution, and is killed again. There is no persistent process, and the design must
+not assume one.
+
+### 6.1 Wake Mechanisms
+
+| Mechanism | Availability | Used for |
+|-----------|--------------|----------|
+| **Background Sync** (`sync`) | Chrome / Edge / Samsung on Android. Not Firefox, not iOS. | **Primary.** Flushes the outbox when connectivity returns, with the app closed. |
+| **Periodic Background Sync** (`periodicsync`) | Chrome only, installed PWA only, interval chosen by the browser (~12 h in practice, tied to engagement score) | Not used. Too unreliable to build on; treat any firing as a bonus. |
+| **Web Push** | Requires a push service and VAPID keys | **Rejected.** Technically deliverable from a GitHub Action, but it means storing push subscription endpoints in the repo. Not worth the complexity or the privacy cost. |
+| **Web Share Target** | Chrome / Android, installed PWA | Launches the app in the foreground — not a background mechanism. |
+
+### 6.2 The Case That Matters
+
+A bookmark shared while offline — on a train, in a lift — sits in the local outbox with nothing
+on GitHub yet. If the user then closes the app, the save must still complete.
+
+* **Chrome on Android:** Background Sync fires on reconnect and the service worker commits it
+  with the app closed. Invisible to the user.
+* **Firefox on Android, and iOS:** no Background Sync. The outbox flushes on next app open.
+  Later, never lossy.
+
+Pulling *remote* changes in the background is deliberately **not** implemented. Sync-on-open
+against a warm cache takes a few hundred milliseconds; background polling would burn battery
+and rate limit for no perceptible gain.
+
+### 6.3 Storage Eviction — The Real Risk
+
+Android evicts IndexedDB under storage pressure, and the outbox lives in IndexedDB. Eviction
+with unsynced bookmarks queued means **silent data loss**.
+
+* Request `navigator.storage.persist()` at install time; Chrome generally grants it to
+  installed PWAs.
+* Surface the result in Settings. If persistence was **denied**, the app must say so plainly
+  rather than quietly risking the queue.
+* Warn in-app whenever the outbox is non-empty and persistence is unavailable.
+
+---
+## 7. Phase 0 — Foundations
 
 * [ ] **0a.** Scaffold Svelte 5 + TypeScript + Vite + Tailwind; strict `tsconfig`.
 * [ ] **0b.** Module layout: `src/lib/api/`, `src/lib/sync/`, `src/lib/schema/`,
@@ -252,7 +295,7 @@ Actions-based enrichment. Default is **off**.
   copy `index.html` to `404.html` so client-side routes survive a refresh.
 * [ ] **0g.** CSP meta tag in the app shell, asserted by a CI check.
 
-## 7. Phase 1 — MVP: Connect, Read, Search
+## 8. Phase 1 — MVP: Connect, Read, Search
 
 * [ ] **1a.** First-run modal: PAT + `owner/repo` + path, with a live connectivity probe.
 * [ ] **1b.** Token store honouring D8 (`sessionStorage` default, `localStorage` opt-in).
@@ -264,7 +307,7 @@ Actions-based enrichment. Default is **off**.
 * [ ] **1g.** Tag sidebar derived from bookmark membership; click to filter, multi-select.
 * [ ] **1h.** Full error taxonomy (§4.5) surfaced as human-readable states.
 
-## 8. Phase 2 — Write Path
+## 9. Phase 2 — Write Path
 
 * [ ] **2a.** Quick-add modal — keyboard-driven, URL-first, tag autocomplete.
 * [ ] **2b.** Edit and delete (delete writes a tombstone, never removes the record).
@@ -274,18 +317,22 @@ Actions-based enrichment. Default is **off**.
 * [ ] **2f.** Descriptive commit messages (`feat: add "Title"`, `chore: sync N changes`).
 * [ ] **2g.** Dedupe on add via `urlKey` — offer "update existing" instead of duplicating.
 
-## 9. Phase 3 — Sync & Resilience
+## 10. Phase 3 — Sync & Resilience
 
 * [ ] **3a.** Merge algorithm (§3.2) wired into the 409 retry path.
 * [ ] **3b.** IndexedDB mirror — app renders instantly from cache, syncs behind.
-* [ ] **3c.** Durable outbox surviving reload, tab close, and crash.
+* [ ] **3c.** Durable outbox surviving reload, tab close, crash, and OS process kill.
 * [ ] **3d.** Offline mode: full read/write locally, flush on reconnect.
 * [ ] **3e.** Multi-tab safety via `navigator.locks` + `BroadcastChannel`.
 * [ ] **3f.** Remote-change detection on window focus; "remote updated — refresh?" banner.
 * [ ] **3g.** Raw media-type reads (`Accept: application/vnd.github.raw`) to clear 1 MB.
 * [ ] **3h.** Tombstone pruning at 90 days.
+* [ ] **3i.** Request `navigator.storage.persist()` at install; expose the grant/deny state
+  in Settings and warn whenever the outbox is non-empty without persistence (§6.3).
+* [ ] **3j.** Register a Background Sync (`sync`) handler in the service worker so a queued
+  save completes with the app closed; fall back to flush-on-open where unsupported (§6.1).
 
-## 10. Phase 4 — Scale & Portability
+## 11. Phase 4 — Scale & Portability
 
 * [ ] **4a.** Migrate writes to the Git Data API (blob -> tree -> commit -> ref).
 * [ ] **4b.** Import: Netscape bookmarks HTML (every browser exports this format).
@@ -294,15 +341,17 @@ Actions-based enrichment. Default is **off**.
 * [ ] **4e.** Bulk dedupe pass over `urlKey` with a review-before-apply UI.
 * [ ] **4f.** Bulk tag operations — rename, merge, delete across the whole collection.
 
-## 11. Phase 5 — Capture Surfaces
+## 12. Phase 5 — Capture Surfaces
 
 * [ ] **5a.** PWA manifest + service worker; installable, offline-capable.
 * [ ] **5b.** Web Share Target so Android "Share -> Bookmarks" works from any app.
 * [ ] **5c.** iOS path — Share Sheet does not support Web Share Target; ship a Shortcut and
   a bookmarklet instead.
 * [ ] **5d.** Desktop bookmarklet: one click captures the current tab's URL and title.
+* [ ] **5e.** Verify the share -> offline -> app-closed path end to end on Chrome Android,
+  and the flush-on-open fallback on Firefox Android (§6.2).
 
-## 12. Phase 6 — Automation (GitHub Actions)
+## 13. Phase 6 — Automation (GitHub Actions)
 
 Browsers cannot fetch arbitrary pages for metadata — CORS blocks it. Enrichment therefore
 runs server-side in the repo itself, which costs nothing and needs no infrastructure.
@@ -313,7 +362,7 @@ runs server-side in the repo itself, which costs nothing and needs no infrastruc
 * [ ] **6c.** Weekly scheduled link checker; flag dead links for review in-app.
 * [ ] **6d.** Optional archival: submit new URLs to the Wayback Machine.
 
-## 13. Phase 7 — UX Polish
+## 14. Phase 7 — UX Polish
 
 * [ ] **7a.** Command palette (`Cmd/Ctrl-K`) — add, search, filter, jump, all keyboard.
 * [ ] **7b.** Theme system: light, dark, and **e-ink high-contrast** (no greys, no
@@ -325,7 +374,7 @@ runs server-side in the repo itself, which costs nothing and needs no infrastruc
 
 ---
 
-## 14. Non-Goals
+## 15. Non-Goals
 
 Recorded so scope stays honest:
 
@@ -333,10 +382,12 @@ Recorded so scope stays honest:
 * **No full-text page archiving.** Bookmarks are pointers, not copies.
 * **No browser extension** before Phase 7 — the bookmarklet and PWA cover capture.
 * **No server component, ever.** If a feature needs one, it belongs in a GitHub Action.
+* **No background polling and no push notifications.** The app syncs when opened and
+  flushes queued writes on reconnect — nothing more (§6).
 
 ---
 
-## 15. Open Questions
+## 16. Open Questions
 
 1. **Custom domain (D10)?** Materially improves token safety by giving the app its own
    origin. Requires a domain you control.
