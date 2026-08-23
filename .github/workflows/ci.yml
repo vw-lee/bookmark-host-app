@@ -1,0 +1,38 @@
+# Task 0e — typecheck, lint, test, build on every push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` rather than `npm install`: the lockfile is the dependency policy (§5.4).
+      - run: npm ci
+
+      - name: Lint (includes the {@html} ban, task 0h)
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Task 0g. The CSP is injected by a build plugin, so nothing else would notice if a
+      # refactor silently dropped it.
+      - name: Assert Content-Security-Policy is present
+        run: node scripts/check-csp.mjs

@@ -1,0 +1,142 @@
+<script lang="ts">
+  /**
+   * Application shell (tasks 1e–1h, 2a–2b).
+   *
+   * Loading states are static text rather than spinners — the cheap habit that keeps the
+   * Phase 7 e-ink work from becoming an audit (§1.2).
+   */
+  import { store } from "./lib/store.svelte";
+  import { GitHubError } from "./lib/api/errors";
+  import { clearConnection } from "./lib/api/tokenStore";
+  import Setup from "./lib/ui/Setup.svelte";
+  import BookmarkRow from "./lib/ui/BookmarkRow.svelte";
+  import TagTree from "./lib/ui/TagTree.svelte";
+  import QuickAdd from "./lib/ui/QuickAdd.svelte";
+  import { liveBookmarks } from "./lib/sync/merge";
+
+  let adding = $state(false);
+  let searchInput = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    void store.restore();
+  });
+
+  function onKeydown(event: KeyboardEvent) {
+    const inField = ["INPUT", "TEXTAREA"].includes((event.target as HTMLElement)?.tagName);
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      adding = true;
+      return;
+    }
+    if (event.key === "/" && !inField) {
+      event.preventDefault();
+      searchInput?.focus();
+    }
+  }
+
+  // Flush on page hide: the 3s debounce would otherwise never fire when a tab is closed (§4.4).
+  function onHide() {
+    if (document.visibilityState === "hidden") store.flushNow();
+  }
+
+  function disconnect() {
+    clearConnection();
+    store.disconnect();
+  }
+
+  const total = $derived(liveBookmarks(store.file).filter((b) => !b.archived).length);
+  const errorMessage = $derived(
+    store.error instanceof GitHubError ? store.error.message : (store.error?.message ?? null),
+  );
+</script>
+
+<svelte:window onkeydown={onKeydown} />
+<svelte:document onvisibilitychange={onHide} />
+
+{#if store.status === "disconnected" || (store.status === "error" && !store.connected)}
+  <Setup />
+{:else}
+  <div class="flex min-h-dvh flex-col">
+    <header class="flex items-center gap-3 border-b border-[var(--color-border)] px-4 py-3">
+      <h1 class="font-semibold">Bookmarks</h1>
+
+      <input
+        bind:this={searchInput}
+        bind:value={store.query}
+        class="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-1.5 text-sm"
+        placeholder="Search title, URL, description, tags…  (press /)"
+        aria-label="Search bookmarks"
+      />
+
+      <button
+        class="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
+        onclick={() => (adding = true)}
+      >
+        Add
+      </button>
+
+      <span class="w-28 text-right text-xs text-[var(--color-ink-soft)]">
+        {#if store.syncing}
+          Syncing…
+        {:else if store.pendingCount > 0}
+          {store.pendingCount} queued
+        {:else if store.lastSyncedAt}
+          Synced
+        {/if}
+      </span>
+
+      <button class="text-xs text-[var(--color-ink-soft)] underline" onclick={disconnect}>
+        Disconnect
+      </button>
+    </header>
+
+    {#if errorMessage}
+      <p class="border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
+        {errorMessage}
+      </p>
+    {/if}
+
+    {#if store.status === "loading"}
+      <p class="p-8 text-sm text-[var(--color-ink-soft)]">Loading your bookmarks…</p>
+    {:else}
+      <div class="flex flex-1">
+        <TagTree
+          counts={store.tagCounts}
+          selected={store.selectedTag}
+          totalCount={total}
+          onSelect={(tag) => (store.selectedTag = tag)}
+        />
+
+        <main class="flex-1">
+          {#if store.visible.length === 0}
+            <p class="p-8 text-sm text-[var(--color-ink-soft)]">
+              {#if total === 0}
+                No bookmarks yet. Press <kbd class="rounded border border-[var(--color-border)] px-1">Ctrl</kbd>
+                +<kbd class="rounded border border-[var(--color-border)] px-1">K</kbd> to add one.
+              {:else}
+                Nothing matches that filter.
+              {/if}
+            </p>
+          {:else}
+            {#each store.visible as bookmark (bookmark.id)}
+              <BookmarkRow
+                {bookmark}
+                onTag={(tag) => (store.selectedTag = tag)}
+                onDelete={(id) => store.deleteBookmark(id)}
+                onTogglePin={(id) =>
+                  store.updateBookmark(id, {
+                    pinned: !store.file.bookmarks.find((b) => b.id === id)?.pinned,
+                  })}
+              />
+            {/each}
+          {/if}
+        </main>
+      </div>
+    {/if}
+  </div>
+{/if}
+
+{#if adding}
+  <QuickAdd onClose={() => (adding = false)} />
+{/if}
