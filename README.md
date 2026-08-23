@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 140 passing across 9 files |
+| Tests | 149 passing across 10 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
@@ -653,8 +653,7 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 * [x] **3h.** Tombstone pruning at 90 days.
 * [x] **3i.** Request `navigator.storage.persist()` at install; expose the grant/deny state
   in Settings and warn whenever the outbox is non-empty without persistence (§6.3).
-* [ ] **3j.** *(Blocked on 5a — a Background Sync handler needs a service worker, which
-  Phase 5 introduces.)* Register a Background Sync (`sync`) handler in the service worker so a queued
+* [x] **3j.** Register a Background Sync (`sync`) handler in the service worker so a queued
   save completes with the app closed; fall back to flush-on-open where unsupported (§6.1).
 * [x] **3k.** Foreground refresh poll — ETag-conditional, default 5 minutes, running only
   while `document.visibilityState === 'visible'` and suspended when hidden, offline, or
@@ -680,24 +679,26 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 
 ## 12. Phase 5 — Capture Surfaces
 
-* [ ] **5a.** PWA manifest + service worker; installable, offline-capable. Manifest needs
+* [x] **5a.** PWA manifest + service worker; installable, offline-capable. Manifest needs
   `name`, `short_name`, `start_url`, `display: standalone`, and 192/512 icons including a
   maskable variant.
-* [ ] **5b.** Web Share Target so Android "Share -> Bookmarks" works from any app.
-* [ ] **5f.** Share-target field normalisation. Android apps are inconsistent about which
+* [x] **5b.** Web Share Target so Android "Share -> Bookmarks" works from any app.
+* [x] **5f.** Share-target field normalisation. Android apps are inconsistent about which
   field carries the URL — many use `text`, some pack title and URL together into `text`,
   fewer use `url`. Read all three (`url`, `text`, `title`) and extract the first valid URL
   from whichever is populated. A handler reading only `params.url` silently receives empty
   shares from a large share of apps.
-* [ ] **5c.** iOS path — Share Sheet does not support Web Share Target; ship a Shortcut and
+* [x] **5c.** iOS path — Share Sheet does not support Web Share Target; ship a Shortcut and
   a bookmarklet instead.
-* [ ] **5d.** Desktop bookmarklet: one click captures the current tab's URL and title.
+* [x] **5d.** Desktop bookmarklet: one click captures the current tab's URL and title.
 * [ ] **5e.** Verify the share -> offline -> app-closed path end to end on Chrome Android,
-  and the flush-on-open fallback on Firefox Android (§6.2).
-* [ ] **5g.** Install flow: capture and stash `beforeinstallprompt`, re-surface the offer
+  and the flush-on-open fallback on Firefox Android (§6.2). **Requires physical devices —
+  cannot be closed by automated tests. Everything it exercises is unit-tested; what is
+  unverified is real Android share-intent behaviour and real Background Sync wake-up.**
+* [x] **5g.** Install flow: capture and stash `beforeinstallprompt`, re-surface the offer
   after the first saved bookmark rather than during setup, and render illustrated
   "Add to Home Screen" instructions on iOS where no programmatic trigger exists (§6.4).
-* [ ] **5h.** On successful install, request storage persistence (3i) and re-evaluate the
+* [x] **5h.** On successful install, request storage persistence (3i) and re-evaluate the
   token storage mode against the §5.5 matrix.
 
 ## 13. Phase 6 — Automation (GitHub Actions)

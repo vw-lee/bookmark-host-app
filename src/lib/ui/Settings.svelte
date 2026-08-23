@@ -27,6 +27,28 @@
   async function grantPersistence() {
     await store.ensurePersistence();
   }
+
+  /**
+   * Desktop bookmarklet (task 5d).
+   *
+   * Offered as copyable text rather than a draggable javascript: anchor. Rendering such an
+   * anchor is exactly what §5.4 forbids everywhere else in this app, and carving out an
+   * exception for our own markup would weaken a rule whose value is that it has none.
+   */
+  const appUrl =
+    typeof location !== "undefined" ? location.origin + location.pathname.replace(/index\.html$/, "") : "";
+  const bookmarklet = `javascript:(function(){window.open('${appUrl}?url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title),'_blank','width=560,height=680')})()`;
+
+  let copied = $state(false);
+  async function copyBookmarklet() {
+    try {
+      await navigator.clipboard.writeText(bookmarklet);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } catch {
+      copied = false;
+    }
+  }
 </script>
 
 <div class="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-16">
@@ -93,6 +115,21 @@
           </button>
         {/each}
       </div>
+    </section>
+
+    <section class="mt-5">
+      <h3 class="text-sm font-medium">Save from other sites</h3>
+      <p class="mt-1 text-sm text-[var(--color-ink-soft)]">
+        Create a new browser bookmark, name it "Save to Bookmarks", and paste this as its
+        address. Clicking it on any page captures that page.
+      </p>
+      <pre class="mt-2 max-h-24 overflow-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-2 text-xs break-all whitespace-pre-wrap">{bookmarklet}</pre>
+      <button
+        class="mt-2 rounded border border-[var(--color-border)] px-3 py-1.5 text-sm"
+        onclick={copyBookmarklet}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
     </section>
 
     <section class="mt-5">

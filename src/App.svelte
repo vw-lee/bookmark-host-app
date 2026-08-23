@@ -15,15 +15,46 @@
   import StatusBar from "./lib/ui/StatusBar.svelte";
   import Settings from "./lib/ui/Settings.svelte";
   import ImportExport from "./lib/ui/ImportExport.svelte";
+  import InstallPrompt from "./lib/ui/InstallPrompt.svelte";
+  import {
+    registerServiceWorker,
+    requestBackgroundSync,
+    watchInstallPrompt,
+    readSharedLink,
+    clearShareParams,
+  } from "./lib/pwa/install";
   import { liveBookmarks } from "./lib/sync/merge";
 
   let adding = $state(false);
   let settingsOpen = $state(false);
   let ioOpen = $state(false);
+  let installAvailable = $state(false);
+  let installDismissed = $state(false);
+  let sharedNotice = $state<string | null>(null);
   let searchInput = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
-    void store.restore();
+    void (async () => {
+      await store.restore();
+
+      // A share arriving before the store is ready would be dropped, so this runs after.
+      const shared = readSharedLink(location.search);
+      if (shared) {
+        const record = store.addBookmark({ url: shared.url, title: shared.title });
+        sharedNotice = record ? `Saved "${record.title}"` : "That link could not be saved.";
+        clearShareParams();
+      }
+    })();
+
+    // The worker asks a client to flush when Background Sync fires (task 3j).
+    void registerServiceWorker(() => store.flushNow());
+    return watchInstallPrompt(() => (installAvailable = true));
+  });
+
+  // Register a background sync whenever work is queued, so a close-then-reconnect still
+  // commits on Chrome Android (§6.2).
+  $effect(() => {
+    if (store.pendingCount > 0) void requestBackgroundSync();
   });
 
   function onKeydown(event: KeyboardEvent) {
@@ -112,6 +143,18 @@
         Disconnect
       </button>
     </header>
+
+    <InstallPrompt
+      available={installAvailable && !installDismissed}
+      onDismiss={() => (installDismissed = true)}
+    />
+
+    {#if sharedNotice}
+      <p class="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+        {sharedNotice}
+        <button class="underline" onclick={() => (sharedNotice = null)}>dismiss</button>
+      </p>
+    {/if}
 
     <StatusBar />
 
