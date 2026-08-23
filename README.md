@@ -56,6 +56,7 @@ before the phase that depends on them begins.
 | D9 | Hosting | **GitHub Pages via `actions/deploy-pages`** | Official path; the `gh-pages` branch pattern is deprecated. |
 | D10 | Custom domain | **OPEN — now blocks D8** | Owning the origin is what makes persistent token storage safe (§5.1, §5.5). Without it, mobile users must choose between re-authenticating constantly and storing a token on a shared origin. |
 | D11 | Encryption at rest | **OPEN — default NO** | Zero-knowledge encryption would kill readable diffs and rule out Actions-based enrichment (§9). |
+| D12 | Taxonomy | **Tags only, `/`-delimited, lowercase canonical, descendant-inclusive filtering** | Folders and tags were two overlapping taxonomies. Derived tree nodes make an inconsistent hierarchy unrepresentable (§3.3). |
 
 ---
 
@@ -66,7 +67,8 @@ before the phase that depends on them begins.
   "schemaVersion": 2,
   "updatedAt": "2026-08-23T08:00:00Z",
   "tagMeta": {
-    "tools": { "color": "#4f8", "order": 1 }
+    "tools": { "color": "#4f8", "order": 1 },
+    "dev/rust": { "label": "Dev/Rust" }
   },
   "bookmarks": [
     {
@@ -104,7 +106,9 @@ before the phase that depends on them begins.
   runtime. `tagMeta` holds presentation metadata only (colour, sort order) and may contain
   keys for tags with zero members.
 * **One taxonomy, not two.** Folders are gone; hierarchy is expressed as `parent/child` tag
-  paths. This removes the folder/tag ambiguity entirely.
+  paths. This removes the folder/tag ambiguity entirely. Full model in §3.3.
+* **Tags are canonically lowercase** and normalised on every write path (§3.3.3), so no two
+  spellings of the same tag can coexist.
 * **IDs are ULIDs** — sortable by creation time, collision-safe, and unlike
   `crypto.randomUUID()` they carry no secure-context requirement.
 * **Serialization is deterministic**: keys sorted, `bookmarks` sorted by `id`, two-space
@@ -127,6 +131,92 @@ merge(local, remote):
 
 Merge is a pure function over two JSON documents with no I/O. It is the highest-risk code in
 the project and therefore the most heavily tested (see Phase 0d).
+
+
+### 3.3 Tag Model
+
+Tags are the **only** taxonomy. There are no folders, no parent pointers, and no stored tree.
+A tag is a single string that may contain `/`, and hierarchy is a rendering convention applied
+to that string.
+
+```
+tags: ["dev/rust/async", "reading-list"]     <- two tags, not four
+```
+
+Rendered:
+
+```
+dev                  (derived node)
+└── rust             (derived node)
+    └── async        <- the bookmark is here
+reading-list         <- and here, at the same time
+```
+
+#### 3.3.1 Derived Nodes Are Not Stored Tags
+
+Ancestor segments materialise as tree nodes at render time. They are **never** written into a
+record's `tags` array. A bookmark tagged `dev/rust/async` is *not* tagged `dev`; its array
+stays exactly `["dev/rust/async"]`.
+
+The rejected alternative — storing every ancestor (`["dev", "dev/rust", "dev/rust/async"]`) —
+fails on three counts:
+
+* **Redundancy.** Ancestors are recoverable from the leaf by splitting on `/`. Storing them
+  inflates every record and every commit diff for no information gain.
+* **Sync consistency.** Ancestor sets would become state that two devices could disagree
+  about — a merge could produce a record tagged `dev/rust/async` but missing `dev/rust`.
+  Deriving them makes that class of corruption unrepresentable.
+* **Cleanup.** Deleting the last `dev/rust/async` bookmark removes the `dev/rust` node
+  automatically, because the node only ever existed as a projection. Stored ancestors would
+  need a garbage-collection pass, which is another thing to get wrong.
+
+The tree is a pure function of the tag strings present. It cannot drift, because there is
+nothing to drift from.
+
+`tagMeta` may still carry an entry for a derived node — a colour on `dev`, say — even though
+no record is literally tagged `dev`. That is presentation state, not membership.
+
+#### 3.3.2 Filtering Includes Descendants
+
+Selecting a node matches that tag **and everything beneath it**. Clicking `dev` returns
+bookmarks tagged `dev`, `dev/rust`, and `dev/rust/async` alike. Implemented as a prefix match
+on `tag === selected || tag.startsWith(selected + "/")` — never a bare `startsWith`, which
+would wrongly match `development` when `dev` is selected.
+
+Each node shows two counts: bookmarks tagged exactly here, and the descendant-inclusive total.
+
+#### 3.3.3 Canonical Form
+
+Tags are stored **lowercase**. Normalisation is applied on every write path — manual entry,
+import, enrichment, and migration — so no two spellings of the same tag can coexist.
+
+| Step | Rule |
+|------|------|
+| 1 | Unicode NFC normalise. Without this, two byte-sequences for `café` become two distinct tags. |
+| 2 | Lowercase (locale-independent). `Dev/Rust` and `dev/rust` are the same tag. |
+| 3 | Split on `/`; trim whitespace from each segment; collapse internal whitespace runs to a single space. |
+| 4 | Drop empty segments — this collapses `//` and strips leading and trailing slashes. |
+| 5 | Strip control characters (§5.4). |
+| 6 | Rejoin with `/`. |
+| 7 | Reject if depth > 5 segments, any segment > 64 characters, or the whole tag > 200 characters. |
+
+`  Dev // Web  Development /  Rust  ` normalises to `dev/web development/rust`.
+
+Spaces inside segments are kept rather than hyphenated — browser bookmark folders are full of
+them, and silently rewriting `Web Development` to `web-development` surprises people more than
+it helps.
+
+**Display case is recoverable.** `tagMeta[tag].label` may hold a presentation string
+(`"Dev/Rust"`) shown in the UI while the canonical lowercase form remains the matching key. The
+label never participates in comparison, filtering, or merge.
+
+#### 3.3.4 Consequences at Import
+
+Browser exports carry arbitrary folder names — mixed case, punctuation, trailing spaces,
+inconsistent depth. Folder paths map directly to tag paths through §3.3.3, which is precisely
+where near-duplicate tags would otherwise be created (`Development`, `development`,
+`Development ` as three sidebar entries). Normalisation collapses them on the way in, and the
+import preview must show the collapse before it is applied.
 
 ---
 
@@ -411,7 +501,12 @@ been saved, when the value is obvious.
 * [ ] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder.
 * [ ] **1f.** Instant local search across title / URL / description / tags, debounced,
   ranked (title match beats description match).
-* [ ] **1g.** Tag sidebar derived from bookmark membership; click to filter, multi-select.
+* [ ] **1g.** Tag tree sidebar built by splitting stored tags on `/` — derived nodes only,
+  never stored ancestors (§3.3.1). Click to filter, multi-select, and show both the exact
+  and descendant-inclusive counts per node.
+* [ ] **1j.** Descendant-inclusive filtering via `tag === sel || tag.startsWith(sel + "/")`.
+  A bare `startsWith` would match `development` when `dev` is selected — unit-tested
+  against exactly that case (§3.3.2).
 * [ ] **1h.** Full error taxonomy (§4.5) surfaced as human-readable states.
 * [ ] **1i.** Render-time URL scheme allowlist (`http:`/`https:`). Anything else renders
   as inert text with a warning badge, never as a clickable anchor (§5.4).
@@ -427,6 +522,10 @@ been saved, when the value is obvious.
 * [ ] **2g.** Dedupe on add via `urlKey` — offer "update existing" instead of duplicating.
 * [ ] **2h.** Save-time URL validation and field-length caps, sharing one validator with
   1i so the two boundaries cannot drift apart (§5.4).
+* [ ] **2i.** Tag normalisation (§3.3.3) applied on every write path, in one shared
+  function. Autocomplete matches on the canonical form and displays `tagMeta.label` where
+  present. Fixture-tested: NFC pairs, mixed case, `//`, padded segments, depth and length
+  limits.
 
 ## 10. Phase 3 — Sync & Resilience
 
@@ -454,6 +553,11 @@ been saved, when the value is obvious.
 * [ ] **4d.** Export: Netscape HTML and raw JSON. No lock-in, by design.
 * [ ] **4e.** Bulk dedupe pass over `urlKey` with a review-before-apply UI.
 * [ ] **4f.** Bulk tag operations — rename, merge, delete across the whole collection.
+  Renaming a subtree is a prefix replace over every matching tag string; re-normalise the
+  result and merge into any tag it now collides with.
+* [ ] **4h.** Map source folder paths to tag paths through the §3.3.3 normaliser, and show
+  the collapse in the import preview — `Development`, `development`, and `Development `
+  becoming one tag must be visible before the import is applied (§3.3.4).
 * [ ] **4g.** Import sanitisation: `DOMParser` into a detached document, `textContent`
   only, control characters stripped, lengths capped. Fixture-tested against a hostile
   bookmarks file containing `javascript:` URLs and HTML payloads in titles (§5.4).
