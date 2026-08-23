@@ -96,6 +96,11 @@ describe("normalizeTag (§3.3.3)", () => {
     expect(normalizeTag("Web Development")).toBe("web development");
   });
 
+  it("strips angle brackets so a tag can never carry markup", () => {
+    expect(normalizeTag("Evil<script>alert(1)</script>")).toBe("evilscriptalert(1)/script");
+    expect(normalizeTag("a<b>c")).toBe("abc");
+  });
+
   it("strips control characters", () => {
     expect(normalizeTag("de\u0000v/ru\u001fst")).toBe("dev/rust");
   });

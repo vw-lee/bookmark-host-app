@@ -14,10 +14,12 @@
   import QuickAdd from "./lib/ui/QuickAdd.svelte";
   import StatusBar from "./lib/ui/StatusBar.svelte";
   import Settings from "./lib/ui/Settings.svelte";
+  import ImportExport from "./lib/ui/ImportExport.svelte";
   import { liveBookmarks } from "./lib/sync/merge";
 
   let adding = $state(false);
   let settingsOpen = $state(false);
+  let ioOpen = $state(false);
   let searchInput = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
@@ -96,6 +98,12 @@
 
       <button
         class="text-xs text-[var(--color-ink-soft)] underline"
+        onclick={() => (ioOpen = true)}
+      >
+        Import
+      </button>
+      <button
+        class="text-xs text-[var(--color-ink-soft)] underline"
         onclick={() => (settingsOpen = true)}
       >
         Settings
@@ -159,4 +167,8 @@
 
 {#if settingsOpen}
   <Settings onClose={() => (settingsOpen = false)} />
+{/if}
+
+{#if ioOpen}
+  <ImportExport onClose={() => (ioOpen = false)} />
 {/if}

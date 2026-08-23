@@ -239,7 +239,7 @@ import, enrichment, and migration — so no two spellings of the same tag can co
 | 2 | Lowercase (locale-independent). `Dev/Rust` and `dev/rust` are the same tag. |
 | 3 | Split on `/`; trim whitespace from each segment; collapse internal whitespace runs to a single space. |
 | 4 | Drop empty segments — this collapses `//` and strips leading and trailing slashes. |
-| 5 | Strip control characters (§5.4). |
+| 5 | Strip control characters and angle brackets (§5.4). No legitimate tag needs `<` or `>`, and an imported folder name can carry a full markup payload. |
 | 6 | Rejoin with `/`. |
 | 7 | Reject if depth > 5 segments, any segment > 64 characters, or the whole tag > 200 characters. |
 
@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 117 passing across 8 files |
+| Tests | 140 passing across 9 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
@@ -664,17 +664,17 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 
 * [ ] ~~**4a.** Migrate writes to the Git Data API.~~ **Deferred indefinitely** (D5) — the
   Contents API is sufficient under 500 bookmarks. Reinstate only if 3g fires.
-* [ ] **4b.** Import: Netscape bookmarks HTML (every browser exports this format).
+* [x] **4b.** Import: Netscape bookmarks HTML (every browser exports this format).
 * [ ] **4c.** Import: Raindrop / Pocket / Pinboard JSON + generic CSV.
-* [ ] **4d.** Export: Netscape HTML and raw JSON. No lock-in, by design.
+* [x] **4d.** Export: Netscape HTML and raw JSON. No lock-in, by design.
 * [ ] **4e.** Bulk dedupe pass over `urlKey` with a review-before-apply UI.
 * [ ] **4f.** Bulk tag operations — rename, merge, delete across the whole collection.
   Renaming a subtree is a prefix replace over every matching tag string; re-normalise the
   result and merge into any tag it now collides with.
-* [ ] **4h.** Map source folder paths to tag paths through the §3.3.3 normaliser, and show
+* [x] **4h.** Map source folder paths to tag paths through the §3.3.3 normaliser, and show
   the collapse in the import preview — `Development`, `development`, and `Development `
   becoming one tag must be visible before the import is applied (§3.3.4).
-* [ ] **4g.** Import sanitisation: `DOMParser` into a detached document, `textContent`
+* [x] **4g.** Import sanitisation: `DOMParser` into a detached document, `textContent`
   only, control characters stripped, lengths capped. Fixture-tested against a hostile
   bookmarks file containing `javascript:` URLs and HTML payloads in titles (§5.4).
 

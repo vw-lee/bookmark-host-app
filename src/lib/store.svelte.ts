@@ -15,6 +15,7 @@ import { emptyFile, SCHEMA_VERSION, type Bookmark, type BookmarkFile } from "./s
 import { normalizeTags, normalizeUrlKey, cleanText, tagMatches } from "./schema/normalize";
 import { ulid } from "./schema/ulid";
 import { merge, liveBookmarks } from "./sync/merge";
+import { toBookmarks, type MergePlan } from "./io/netscape";
 import { saveMirror, loadMirror, clearMirror, type MirrorState } from "./sync/db";
 import { withWriteLock, announce, onTabMessage } from "./sync/tabs";
 import {
@@ -451,6 +452,41 @@ export class AppStore {
       ),
     };
     this.scheduleFlush();
+  }
+
+  // ------------------------------------------------------------------ import
+
+  /**
+   * Apply an import plan (task 4b/4h). The plan is built and previewed first; this only
+   * commits what the user already saw.
+   *
+   * Incoming tags are merged into an existing record rather than replacing them — an import
+   * should never silently drop categorisation the user has already done.
+   */
+  applyImport(plan: MergePlan): { added: number; updated: number } {
+    const now = new Date().toISOString();
+    const additions = toBookmarks(plan.additions);
+
+    const updatedIds = new Map(plan.updates.map((u) => [u.existingId, u.incoming]));
+    const existing = this.file.bookmarks.map((b) => {
+      const incoming = updatedIds.get(b.id);
+      if (!incoming) return b;
+      return {
+        ...b,
+        title: b.title || incoming.title,
+        description: b.description || incoming.description,
+        tags: normalizeTags([...b.tags, ...incoming.tags]),
+        updatedAt: now,
+      };
+    });
+
+    this.file = {
+      ...this.file,
+      updatedAt: now,
+      bookmarks: [...existing, ...additions],
+    };
+    this.scheduleFlush();
+    return { added: additions.length, updated: plan.updates.length };
   }
 
   // ------------------------------------------------------------------- writes

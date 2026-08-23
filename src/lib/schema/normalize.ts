@@ -99,6 +99,11 @@ export function normalizeTag(raw: string): string {
     .normalize("NFC")
     .toLowerCase()
     .replace(CONTROL_CHARS, "")
+    // Angle brackets are stripped as defence in depth. No legitimate tag needs them, and an
+    // imported folder name can carry a full markup payload (browsers happily export
+    // "Evil<script>alert(1)</script>" as a folder). Svelte escapes on render, but a tag is
+    // also written to exports and title attributes, so it should never contain markup at all.
+    .replace(/[<>]/g, "")
     .split("/")
     .map((s) => s.trim().replace(/\s+/g, " "))
     .filter((s) => s.length > 0);
