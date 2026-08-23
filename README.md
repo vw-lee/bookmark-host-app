@@ -335,9 +335,17 @@ on GitHub yet. If the user then closes the app, the save must still complete.
 * **Firefox on Android, and iOS:** no Background Sync. The outbox flushes on next app open.
   Later, never lossy.
 
-Pulling *remote* changes in the background is deliberately **not** implemented. Sync-on-open
-against a warm cache takes a few hundred milliseconds; background polling would burn battery
-and rate limit for no perceptible gain.
+Pulling *remote* changes **while the app is closed** is deliberately not implemented.
+Sync-on-open against a warm cache takes a few hundred milliseconds; true background polling
+would burn battery and rate limit for no perceptible gain.
+
+**Foreground refresh is a separate matter.** A device left open and focused all day would
+otherwise never re-check — add a bookmark on a phone at noon and a laptop tab untouched since
+morning stays stale indefinitely, because the focus trigger (3f) only fires on a focus
+*change*. A low-frequency poll while the document is visible closes that gap almost for free:
+the request is ETag-conditional, so an unchanged file returns `304` and costs no rate-limit
+quota. The poll runs only when `document.visibilityState === 'visible'`, and stops entirely
+when hidden.
 
 ### 6.3 Storage Eviction — The Real Risk
 
@@ -434,6 +442,9 @@ been saved, when the value is obvious.
   in Settings and warn whenever the outbox is non-empty without persistence (§6.3).
 * [ ] **3j.** Register a Background Sync (`sync`) handler in the service worker so a queued
   save completes with the app closed; fall back to flush-on-open where unsupported (§6.1).
+* [ ] **3k.** Foreground refresh poll — ETag-conditional, default 5 minutes, running only
+  while `document.visibilityState === 'visible'` and suspended when hidden, offline, or
+  rate-limited. Closes the stale-open-tab gap that 3f cannot cover (§6.2).
 
 ## 11. Phase 4 — Scale & Portability
 
@@ -490,7 +501,9 @@ runs server-side in the repo itself, which costs nothing and needs no infrastruc
 * [ ] **7c.** Virtualized list so 10,000+ bookmarks stay smooth.
 * [ ] **7d.** Accessibility: full keyboard navigation, focus management, ARIA, reduced-motion.
 * [ ] **7e.** Onboarding that states the git-history privacy caveat (§5.3) plainly.
-* [ ] **7f.** Settings: storage mode, sync interval, tombstone retention, theme.
+* [ ] **7f.** Settings: token storage mode (§5.5, showing which mode is active and why),
+  foreground refresh interval (3k; off / 1 / 5 / 15 min), tombstone retention, storage
+  persistence state (§6.3), theme.
 
 ---
 
