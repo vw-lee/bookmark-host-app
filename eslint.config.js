@@ -10,7 +10,9 @@ export default [
   ...svelte.configs["flat/recommended"],
   {
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node },
+      // __BUILD_STAMP__ is injected by vite's `define`, so it exists at runtime but not in
+      // any lexical scope eslint can see.
+      globals: { ...globals.browser, ...globals.node, __BUILD_STAMP__: "readonly" },
     },
     rules: {
       /**

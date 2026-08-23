@@ -41,7 +41,19 @@ function cspPlugin(): Plugin {
   };
 }
 
+/**
+ * A visible build identifier.
+ *
+ * Added after a stale service-worker cache served a frozen copy of the app for several
+ * debugging rounds, making three separate fixes appear to do nothing. If the stamp on screen
+ * does not change, you are not running the code you just changed.
+ */
+const BUILD_STAMP = new Date().toISOString().slice(0, 19).replace("T", " ");
+
 export default defineConfig({
+  define: {
+    __BUILD_STAMP__: JSON.stringify(BUILD_STAMP),
+  },
   // Relative base so one build works from a project Pages path and from a custom domain.
   base: "./",
   plugins: [svelte(), tailwindcss(), cspPlugin()],

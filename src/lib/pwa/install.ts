@@ -4,11 +4,27 @@
 
 const SYNC_TAG = "bookmarks-flush";
 
-/** Registers the worker. Failure is non-fatal — the app works fine without it. */
+/**
+ * Registers the worker. Failure is non-fatal — the app works fine without it.
+ *
+ * NEVER registered during development. The worker caches assets cache-first, which in dev means
+ * serving stale Vite modules — and if the dev server is not running, serving a complete frozen
+ * snapshot of the app from cache while HMR silently fails to connect. That state is extremely
+ * confusing: the page loads, looks right, and ignores every change you make to the source.
+ *
+ * In dev it does the opposite: actively tears down any worker and cache a previous build left
+ * behind, so a browser already stuck in that state heals itself on the next load.
+ */
 export async function registerServiceWorker(
   onFlushRequest: () => void,
 ): Promise<ServiceWorkerRegistration | null> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
+
+  if (import.meta.env.DEV) {
+    await unregisterServiceWorkers();
+    return null;
+  }
+
   try {
     const registration = await navigator.serviceWorker.register(
       new URL("sw.js", document.baseURI).href,
@@ -41,6 +57,41 @@ export async function requestBackgroundSync(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Remove any registered worker and every cache it created.
+ *
+ * Exported so it can also be triggered deliberately — a stuck cache is otherwise only fixable
+ * through DevTools, which is not something a user should need to know about.
+ */
+export async function unregisterServiceWorkers(): Promise<boolean> {
+  let removed = false;
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    for (const registration of registrations) {
+      await registration.unregister();
+      removed = true;
+    }
+  } catch {
+    /* nothing useful to do */
+  }
+  try {
+    if (typeof caches !== "undefined") {
+      for (const key of await caches.keys()) {
+        await caches.delete(key);
+        removed = true;
+      }
+    }
+  } catch {
+    /* nothing useful to do */
+  }
+  if (removed) {
+    console.warn(
+      "[bookmarks] Removed a stale service worker and its caches. Reload to get fresh code.",
+    );
+  }
+  return removed;
 }
 
 export interface BeforeInstallPromptEvent extends Event {

@@ -27,6 +27,9 @@
 
   const tokenUrl = "https://github.com/settings/personal-access-tokens/new";
 
+  // If this does not change after a code change, the page is being served from a cache.
+  const build = typeof __BUILD_STAMP__ === "string" ? __BUILD_STAMP__ : "unknown";
+
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     message = null;
@@ -217,4 +220,6 @@
       </form>
     </li>
   </ol>
+
+  <p class="mt-8 text-center text-xs text-[var(--color-ink-soft)]">build {build}</p>
 </div>
