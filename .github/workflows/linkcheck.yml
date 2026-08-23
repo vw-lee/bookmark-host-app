@@ -1,0 +1,29 @@
+# Task 6c — weekly dead-link check.
+#
+# Belongs in the DATA repository alongside enrich.yml. It never edits bookmarks.json; it opens
+# or updates a single issue so dead links are reviewed by a person rather than deleted
+# automatically. A link that 404s today may be a site outage, not a dead bookmark.
+name: Check links
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check every link
+        id: check
+        run: node scripts/linkcheck.mjs data/bookmarks.json >> "$GITHUB_STEP_SUMMARY"

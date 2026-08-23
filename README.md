@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 164 passing across 12 files |
+| Tests | 188 passing across 13 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
@@ -708,12 +708,18 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 Browsers cannot fetch arbitrary pages for metadata — CORS blocks it. Enrichment therefore
 runs server-side in the repo itself, which costs nothing and needs no infrastructure.
 
-* [ ] **6a.** On-commit Action: fetch `<title>`, meta description, and favicon for records
+**These workflows belong in the DATA repository**, not the app repository — they act on
+`data/bookmarks.json`. Copy `.github/workflows/enrich.yml`, `.github/workflows/linkcheck.yml`
+and the `scripts/` directory across. The app repo keeps them only as the canonical source.
+
+* [x] **6a.** On-commit Action: fetch `<title>`, meta description, and favicon for records
   where `enrichedAt` is null; commit the enrichment back.
-* [ ] **6b.** Loop guard — the enrichment commit must not retrigger the workflow.
-* [ ] **6c.** Weekly scheduled link checker; flag dead links for review in-app.
+* [x] **6b.** Loop guard — the enrichment commit must not retrigger the workflow.
+* [x] **6c.** Weekly scheduled link checker, reporting to the job summary. Deliberately
+  read-only — a 404 today may be an outage, a rate limit, or a bot wall, and deleting a
+  bookmark on that evidence is worse than leaving a dead link.
 * [ ] **6d.** Optional archival: submit new URLs to the Wayback Machine.
-* [ ] **6e.** Sanitise scraped metadata inside the Action — strip control characters, cap
+* [x] **6e.** Sanitise scraped metadata inside the Action — strip control characters, cap
   lengths — and re-validate on load. Our own workflow's output is not trusted (§5.4).
 
 ## 14. Phase 7 — UX Polish
