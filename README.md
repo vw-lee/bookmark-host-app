@@ -568,60 +568,77 @@ any reason to want it. Stash the event and re-surface the offer once the first b
 been saved, when the value is obvious.
 
 ---
+## 6.5 Build Status
+
+The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, and build.
+
+| Area | State |
+|------|-------|
+| Tests | 103 passing across 7 files |
+| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration |
+| Bundle | ~128 KB raw / ~39 KB gzipped |
+| Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
+
+Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before committing.
+
+---
+
 ## 7. Phase 0 — Foundations
 
-* [ ] **0a.** Scaffold Svelte 5 + TypeScript + Vite + Tailwind; strict `tsconfig`.
-* [ ] **0b.** Module layout: `src/lib/api/`, `src/lib/sync/`, `src/lib/schema/`,
+* [x] **0a.** Scaffold Svelte 5 + TypeScript + Vite + Tailwind; strict `tsconfig`.
+* [x] **0b.** Module layout: `src/lib/api/`, `src/lib/sync/`, `src/lib/schema/`,
   `src/lib/ui/`. No file exceeds 2,000 lines (per `AI_RULES_V1.13.md`).
-* [ ] **0c.** Zod schema + migration ladder (`v1 -> v2`), with deterministic serializer.
-* [ ] **0d.** Test harness (Vitest) + mocked GitHub API. Required coverage from day one:
+* [x] **0c.** Zod schema + migration ladder (`v1 -> v2`), with deterministic serializer.
+* [x] **0d.** Test harness (Vitest) + mocked GitHub API. Required coverage from day one:
   merge algorithm, base64 round-trip (emoji/CJK fixture), URL normalization, migrations.
-* [ ] **0e.** CI workflow: typecheck, lint, test, build on every push.
-* [ ] **0f.** Deploy workflow using `actions/upload-pages-artifact` + `actions/deploy-pages`;
+* [x] **0e.** CI workflow: typecheck, lint, test, build on every push.
+* [x] **0f.** Deploy workflow using `actions/upload-pages-artifact` + `actions/deploy-pages`;
   copy `index.html` to `404.html` so client-side routes survive a refresh.
-* [ ] **0g.** CSP meta tag in the app shell, asserted by a CI check.
-* [ ] **0h.** ESLint rule banning `{@html}`, plus a dependency policy — committed
+* [x] **0g.** CSP meta tag in the app shell, asserted by a CI check.
+* [x] **0h.** ESLint rule banning `{@html}`, plus a dependency policy — committed
   lockfile, `npm ci`, no post-install scripts, no runtime CDN fetches (§5.4).
 
 ## 8. Phase 1 — MVP: Connect, Read, Search
 
-* [ ] **1a.** First-run modal: PAT + `owner/repo` + path, with a live connectivity probe.
-* [ ] **1b.** Token store honouring D8 (`sessionStorage` default, `localStorage` opt-in).
-* [ ] **1c.** Read path: fetch, decode, validate, migrate, hydrate store; cache the ETag.
-* [ ] **1d.** Bootstrap flow — create `data/bookmarks.json` when the path 404s.
-* [ ] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder. Colours
+* [x] **1a.** First-run modal: PAT + `owner/repo` + path, with a live connectivity probe.
+* [x] **1b.** Token store honouring D8 (`sessionStorage` default, `localStorage` opt-in).
+  D13 (PIN-wrapping) would sit behind the same interface without changing callers.
+* [x] **1c.** Read path: fetch, decode, validate, migrate, hydrate store; cache the ETag.
+* [x] **1d.** Bootstrap flow — create `data/bookmarks.json` when the path 404s.
+* [x] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder. Colours
   behind design tokens so the Phase 7 e-ink theme is a palette swap, not an audit (§1.2).
-* [ ] **1f.** Instant local search across title / URL / description / tags, debounced,
+* [x] **1f.** Instant local search across title / URL / description / tags, debounced,
   ranked (title match beats description match).
-* [ ] **1g.** Tag tree sidebar built by splitting stored tags on `/` — derived nodes only,
+* [x] **1g.** Tag tree sidebar built by splitting stored tags on `/` — derived nodes only,
   never stored ancestors (§3.3.1). Click to filter, multi-select, and show both the exact
   and descendant-inclusive counts per node.
-* [ ] **1j.** Descendant-inclusive filtering via `tag === sel || tag.startsWith(sel + "/")`.
+* [x] **1j.** Descendant-inclusive filtering via `tag === sel || tag.startsWith(sel + "/")`.
   A bare `startsWith` would match `development` when `dev` is selected — unit-tested
   against exactly that case (§3.3.2).
-* [ ] **1h.** Full error taxonomy (§4.5) surfaced as human-readable states.
-* [ ] **1i.** Render-time URL scheme allowlist (`http:`/`https:`). Anything else renders
+* [x] **1h.** Full error taxonomy (§4.5) surfaced as human-readable states.
+* [x] **1i.** Render-time URL scheme allowlist (`http:`/`https:`). Anything else renders
   as inert text with a warning badge, never as a clickable anchor (§5.4).
 
 ## 9. Phase 2 — Write Path
 
-* [ ] **2a.** Quick-add modal — keyboard-driven, URL-first, tag autocomplete.
-* [ ] **2b.** Edit and delete (delete writes a tombstone, never removes the record).
-* [ ] **2c.** Write queue: single in-flight, 3 s debounce, batched commits.
-* [ ] **2d.** Backoff honouring `Retry-After` / `x-ratelimit-reset`.
-* [ ] **2e.** Optimistic UI with rollback on terminal failure.
-* [ ] **2f.** Descriptive commit messages (`feat: add "Title"`, `chore: sync N changes`).
-* [ ] **2g.** Dedupe on add via `urlKey` — offer "update existing" instead of duplicating.
-* [ ] **2h.** Save-time URL validation and field-length caps, sharing one validator with
+* [x] **2a.** Quick-add modal — keyboard-driven, URL-first, tag autocomplete.
+* [x] **2b.** Edit and delete (delete writes a tombstone, never removes the record).
+* [x] **2c.** Write queue: single in-flight, 3 s debounce, batched commits.
+* [ ] **2d.** Backoff honouring `Retry-After` / `x-ratelimit-reset`. *Partial: the client
+  parses both headers into `GitHubError.retryAt`; the queue does not yet park on them.*
+* [x] **2e.** Optimistic UI with rollback on terminal failure.
+* [x] **2f.** Descriptive commit messages (`feat: add "Title"`, `chore: sync N changes`).
+* [x] **2g.** Dedupe on add via `urlKey` — offer "update existing" instead of duplicating.
+* [x] **2h.** Save-time URL validation and field-length caps, sharing one validator with
   1i so the two boundaries cannot drift apart (§5.4).
-* [ ] **2i.** Tag normalisation (§3.3.3) applied on every write path, in one shared
+* [x] **2i.** Tag normalisation (§3.3.3) applied on every write path, in one shared
   function. Autocomplete matches on the canonical form and displays `tagMeta.label` where
   present. Fixture-tested: NFC pairs, mixed case, `//`, padded segments, depth and length
   limits.
 
 ## 10. Phase 3 — Sync & Resilience
 
-* [ ] **3a.** Merge algorithm (§3.2) wired into the 409 retry path.
+* [x] **3a.** Merge algorithm (§3.2) wired into the 409 retry path.
 * [ ] **3b.** IndexedDB mirror — app renders instantly from cache, syncs behind.
 * [ ] **3c.** Durable outbox surviving reload, tab close, crash, and OS process kill.
 * [ ] **3d.** Offline mode: full read/write locally, flush on reconnect.
