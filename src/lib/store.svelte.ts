@@ -63,6 +63,11 @@ export class AppStore {
   /** Set when another device committed and we adopted it, so the UI can say so. */
   remoteChangedAt = $state<string | null>(null);
 
+  /** True until restore() settles, so the shell does not flash the setup form on startup. */
+  booting = $state(true);
+  /** Set when the user explicitly asks to (re)connect, overriding the cached-data case. */
+  wantsSetup = $state(false);
+
   private client: GitHubClient | null = null;
   private sha: string | null = null;
   private etag: string | null = null;
@@ -121,6 +126,22 @@ export class AppStore {
   }
 
   /**
+   * Should the shell show the first-run form?
+   *
+   * Deliberately keyed on `connected` rather than on `status`. `status` becomes "loading" the
+   * moment a connection attempt starts, and keying on it unmounted the form mid-submit —
+   * destroying the typed token and the error message it was about to show, so a failed connect
+   * looked like nothing happening at all.
+   *
+   * A cached collection with no working token still renders read-only; the user reaches this
+   * form through the reconnect banner instead.
+   */
+  get needsSetup(): boolean {
+    if (this.wantsSetup) return true;
+    return !this.connected && liveBookmarks(this.file).length === 0;
+  }
+
+  /**
    * Startup (tasks 3b, 3c, 3d).
    *
    * The mirror is adopted BEFORE the network is touched, so the app renders from cache in one
@@ -128,6 +149,14 @@ export class AppStore {
    * is the whole point of persisting `dirty`.
    */
   async restore(): Promise<void> {
+    try {
+      await this.restoreInner();
+    } finally {
+      this.booting = false;
+    }
+  }
+
+  private async restoreInner(): Promise<void> {
     this.installListeners();
     void persistenceState().then((state) => (this.persistence = state));
 
@@ -279,12 +308,14 @@ export class AppStore {
     try {
       await client.probe();
       this.client = client;
+      this.wantsSetup = false;
       if (mode) saveConnection(connection, mode);
       await this.load();
     } catch (e) {
       this.client = null;
       this.error = e as Error;
       this.status = "error";
+      // Rethrown so the setup form — which is still mounted — can show the reason inline.
       throw e;
     }
   }
@@ -634,6 +665,7 @@ export class AppStore {
     this.file = emptyFile();
     this.status = "disconnected";
     this.error = null;
+    this.wantsSetup = true;
     this.dirty = false;
     this.pendingCount = 0;
     for (const off of this.teardown) off();

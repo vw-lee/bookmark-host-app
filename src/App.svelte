@@ -93,7 +93,9 @@
 <svelte:window onkeydown={onKeydown} />
 <svelte:document onvisibilitychange={onVisibilityChange} />
 
-{#if store.status === "disconnected" || (store.status === "error" && !store.connected)}
+{#if store.booting}
+  <p class="p-8 text-sm text-[var(--color-ink-soft)]">Starting…</p>
+{:else if store.needsSetup}
   <Setup />
 {:else}
   <div class="flex min-h-dvh flex-col">
@@ -157,6 +159,13 @@
     {/if}
 
     <StatusBar />
+
+    {#if !store.connected}
+      <p class="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+        Not connected to GitHub — showing the copy saved on this device.
+        <button class="underline" onclick={() => (store.wantsSetup = true)}>Reconnect</button>
+      </p>
+    {/if}
 
     {#if errorMessage}
       <p class="border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
