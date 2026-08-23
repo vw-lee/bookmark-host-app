@@ -52,9 +52,9 @@ before the phase that depends on them begins.
 | D5 | Write API | **Contents API in Phase 2, Git Data API from Phase 4** | Contents API is simpler to ship; Git Data API removes the 1 MB ceiling and enables multi-file atomic commits. |
 | D6 | Conflict model | **Per-record last-write-wins with tombstones** | A true CRDT is overkill for single-user multi-device. Field-level merge may come later. |
 | D7 | Local cache | **IndexedDB mirror + durable outbox** | Optimistic UI without durable queueing loses data on failed commits. |
-| D8 | Token storage | **`sessionStorage` by default; `localStorage` opt-in with an explicit warning** | See §5. |
+| D8 | Token storage | **REOPENED — conditional on origin and install state** | A flat `sessionStorage` default is unusable on mobile: Android kills backgrounded PWAs and the token vanishes with the context. See the matrix in §5.5. |
 | D9 | Hosting | **GitHub Pages via `actions/deploy-pages`** | Official path; the `gh-pages` branch pattern is deprecated. |
-| D10 | Custom domain | **OPEN** | Strongly recommended — see §5.1. Affects token-storage safety materially. |
+| D10 | Custom domain | **OPEN — now blocks D8** | Owning the origin is what makes persistent token storage safe (§5.1, §5.5). Without it, mobile users must choose between re-authenticating constantly and storing a token on a shared origin. |
 | D11 | Encryption at rest | **OPEN — default NO** | Zero-knowledge encryption would kill readable diffs and rule out Actions-based enrichment (§9). |
 
 ---
@@ -282,6 +282,30 @@ cost of a compromise; the scheme allowlist and the escaping rules are what preve
 write. Not the account, not other repositories, not SSH keys, not Actions secrets. That
 containment is the entire reason for the fine-grained scope in §5.2.
 
+### 5.5 Token Storage — Conditional on Origin and Install State
+
+`sessionStorage` was originally chosen as a flat default (D8). That is wrong on mobile.
+**`sessionStorage` is scoped to a browsing context**, and Android kills backgrounded PWAs
+routinely — so every cold launch of an installed app presents an empty store and demands the
+PAT again. Nobody re-pastes a fine-grained token several times a week. In practice every
+mobile user would take the `localStorage` opt-in, and "secure by default" would be theatre.
+
+The safety of `localStorage` depends entirely on whether the app owns its origin (§5.1), so
+the default is conditional rather than flat:
+
+| Origin | Context | Default | Reasoning |
+|--------|---------|---------|-----------|
+| Custom domain (D10) | Installed PWA | `localStorage` | App owns the origin; no sibling pages exist to read it. Re-auth on every launch would be unusable. |
+| Custom domain (D10) | Browser tab | `localStorage`, opt-out available | Same origin isolation; the tab is simply less persistent. |
+| `*.github.io` | Installed PWA | `sessionStorage`, `localStorage` opt-in behind an explicit warning | Origin is shared with every other project on the account. The friction is the honest cost of that choice. |
+| `*.github.io` | Browser tab | `sessionStorage` | Highest exposure, lowest need for persistence. |
+| Shared or public device | Any | `sessionStorage`, forced | Offered as a "public computer" toggle in the first-run modal. |
+
+This makes the custom-domain question (§16.1) materially more than a nicety: **it is what
+decides whether the mobile experience can be both usable and safe.** Detection is
+`window.matchMedia('(display-mode: standalone)')` plus an origin check, evaluated at startup
+and surfaced in Settings so the user can see which mode they are in and why.
+
 ---
 
 ## 6. Background Execution & Platform Limits
@@ -325,6 +349,34 @@ with unsynced bookmarks queued means **silent data loss**.
 * Surface the result in Settings. If persistence was **denied**, the app must say so plainly
   rather than quietly risking the queue.
 * Warn in-app whenever the outbox is non-empty and persistence is unavailable.
+
+### 6.4 Installation Is a Prerequisite, Not a Nicety
+
+"Install" here is not an app-store download — there is no APK and nothing to publish. The
+browser gives the existing page an app presence: launcher icon, standalone window, its own
+entry in the app switcher. Same code, same origin, same storage. But three things depend on
+it:
+
+* **Web Share Target only exists for installed apps.** Android offers share targets from
+  installed apps only, so 5b — the primary mobile capture path — does not function at all
+  until the user installs. On mobile, install *is* the capture story.
+* **Storage persistence is granted on install.** `navigator.storage.persist()` (§6.3) is
+  heuristic and Chrome weights installation heavily. Installed generally succeeds; a plain tab
+  generally does not. This is the difference between an outbox that survives storage pressure
+  and one that is silently evicted.
+* **Token persistence policy keys off it** (§5.5).
+
+**Install paths differ sharply by platform:**
+
+| Platform | Trigger | Notes |
+|----------|---------|-------|
+| Chrome — Android / desktop | `beforeinstallprompt` | Capture the event, `preventDefault()`, stash it, surface a custom Install button. One shot per session; a dismissal means no refire. |
+| Safari — iOS | **None. Cannot be triggered programmatically.** | Detect iOS and render illustrated Share -> "Add to Home Screen" instructions. The result still has no Share Target and no Background Sync. |
+| Firefox — Android | "Add to Home screen" | Installs, but gains neither Share Target nor Background Sync. |
+
+The install prompt frequently becomes available *during* first-run setup, before the user has
+any reason to want it. Stash the event and re-surface the offer once the first bookmark has
+been saved, when the value is obvious.
 
 ---
 ## 7. Phase 0 — Foundations
@@ -397,13 +449,25 @@ with unsynced bookmarks queued means **silent data loss**.
 
 ## 12. Phase 5 — Capture Surfaces
 
-* [ ] **5a.** PWA manifest + service worker; installable, offline-capable.
+* [ ] **5a.** PWA manifest + service worker; installable, offline-capable. Manifest needs
+  `name`, `short_name`, `start_url`, `display: standalone`, and 192/512 icons including a
+  maskable variant.
 * [ ] **5b.** Web Share Target so Android "Share -> Bookmarks" works from any app.
+* [ ] **5f.** Share-target field normalisation. Android apps are inconsistent about which
+  field carries the URL — many use `text`, some pack title and URL together into `text`,
+  fewer use `url`. Read all three (`url`, `text`, `title`) and extract the first valid URL
+  from whichever is populated. A handler reading only `params.url` silently receives empty
+  shares from a large share of apps.
 * [ ] **5c.** iOS path — Share Sheet does not support Web Share Target; ship a Shortcut and
   a bookmarklet instead.
 * [ ] **5d.** Desktop bookmarklet: one click captures the current tab's URL and title.
 * [ ] **5e.** Verify the share -> offline -> app-closed path end to end on Chrome Android,
   and the flush-on-open fallback on Firefox Android (§6.2).
+* [ ] **5g.** Install flow: capture and stash `beforeinstallprompt`, re-surface the offer
+  after the first saved bookmark rather than during setup, and render illustrated
+  "Add to Home Screen" instructions on iOS where no programmatic trigger exists (§6.4).
+* [ ] **5h.** On successful install, request storage persistence (3i) and re-evaluate the
+  token storage mode against the §5.5 matrix.
 
 ## 13. Phase 6 — Automation (GitHub Actions)
 
@@ -445,8 +509,10 @@ Recorded so scope stays honest:
 
 ## 16. Open Questions
 
-1. **Custom domain (D10)?** Materially improves token safety by giving the app its own
-   origin. Requires a domain you control.
+1. **Custom domain (D10)? — now the highest-priority question.** It gates D8: owning the
+   origin is what allows a persistent token without the §5.1 shared-origin exposure, and
+   therefore decides whether the installed mobile app can be both usable and safe (§5.5).
+   Requires a domain you control.
 2. **Encryption at rest (D11)?** Default is off. Turning it on forfeits readable diffs and
    all Phase 6 automation.
 3. **Repo layout** — dedicated bookmarks repo, or `data/` inside an existing private repo?
