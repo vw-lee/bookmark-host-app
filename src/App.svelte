@@ -12,9 +12,12 @@
   import BookmarkRow from "./lib/ui/BookmarkRow.svelte";
   import TagTree from "./lib/ui/TagTree.svelte";
   import QuickAdd from "./lib/ui/QuickAdd.svelte";
+  import StatusBar from "./lib/ui/StatusBar.svelte";
+  import Settings from "./lib/ui/Settings.svelte";
   import { liveBookmarks } from "./lib/sync/merge";
 
   let adding = $state(false);
+  let settingsOpen = $state(false);
   let searchInput = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
@@ -36,8 +39,11 @@
   }
 
   // Flush on page hide: the 3s debounce would otherwise never fire when a tab is closed (§4.4).
-  function onHide() {
+  // On becoming visible again, refresh (task 3f) — the focus trigger only fires on a change,
+  // which is why the 3k poll exists alongside it.
+  function onVisibilityChange() {
     if (document.visibilityState === "hidden") store.flushNow();
+    else store.refreshOnFocus();
   }
 
   function disconnect() {
@@ -52,7 +58,7 @@
 </script>
 
 <svelte:window onkeydown={onKeydown} />
-<svelte:document onvisibilitychange={onHide} />
+<svelte:document onvisibilitychange={onVisibilityChange} />
 
 {#if store.status === "disconnected" || (store.status === "error" && !store.connected)}
   <Setup />
@@ -81,15 +87,25 @@
           Syncing…
         {:else if store.pendingCount > 0}
           {store.pendingCount} queued
+        {:else if store.offline}
+          Offline
         {:else if store.lastSyncedAt}
           Synced
         {/if}
       </span>
 
+      <button
+        class="text-xs text-[var(--color-ink-soft)] underline"
+        onclick={() => (settingsOpen = true)}
+      >
+        Settings
+      </button>
       <button class="text-xs text-[var(--color-ink-soft)] underline" onclick={disconnect}>
         Disconnect
       </button>
     </header>
+
+    <StatusBar />
 
     {#if errorMessage}
       <p class="border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
@@ -139,4 +155,8 @@
 
 {#if adding}
   <QuickAdd onClose={() => (adding = false)} />
+{/if}
+
+{#if settingsOpen}
+  <Settings onClose={() => (settingsOpen = false)} />
 {/if}

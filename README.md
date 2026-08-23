@@ -99,6 +99,7 @@ before the phase that depends on them begins.
 | D12 | Taxonomy | **Tags only, `/`-delimited, lowercase canonical, descendant-inclusive filtering** | Folders and tags were two overlapping taxonomies. Derived tree nodes make an inconsistent hierarchy unrepresentable (§3.3). |
 | D13 | Token at rest | **OPEN — PIN-wrapped `localStorage` proposed** | Would replace re-pasting a 93-character PAT with a short PIN while keeping sibling pages on the shared origin locked out. Needs sign-off before Phase 1b. |
 | D14 | E-ink support | **Deferred to Phase 7 polish, after the MVP** | User decision. Two zero-cost habits during the MVP keep the deferral cheap: colour behind design tokens, and no animation built that would only be removed (§1.2). |
+| D15 | Outbox shape | **Whole-document mirror plus a dirty flag, not a replayable op log** | The LWW+tombstone model (D6) already reconciles two documents without knowing which edits produced them. An op log would be more machinery for the same result, plus a new failure mode: a log that has drifted from the document it describes. |
 
 ---
 
@@ -574,8 +575,8 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 103 passing across 7 files |
-| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration |
+| Tests | 117 passing across 8 files |
+| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
 
@@ -624,8 +625,8 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 * [x] **2a.** Quick-add modal — keyboard-driven, URL-first, tag autocomplete.
 * [x] **2b.** Edit and delete (delete writes a tombstone, never removes the record).
 * [x] **2c.** Write queue: single in-flight, 3 s debounce, batched commits.
-* [ ] **2d.** Backoff honouring `Retry-After` / `x-ratelimit-reset`. *Partial: the client
-  parses both headers into `GitHubError.retryAt`; the queue does not yet park on them.*
+* [x] **2d.** Backoff honouring `Retry-After` / `x-ratelimit-reset` — the queue parks until
+  the reset and resumes on its own, with a countdown in the status bar.
 * [x] **2e.** Optimistic UI with rollback on terminal failure.
 * [x] **2f.** Descriptive commit messages (`feat: add "Title"`, `chore: sync N changes`).
 * [x] **2g.** Dedupe on add via `urlKey` — offer "update existing" instead of duplicating.
@@ -639,22 +640,23 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 ## 10. Phase 3 — Sync & Resilience
 
 * [x] **3a.** Merge algorithm (§3.2) wired into the 409 retry path.
-* [ ] **3b.** IndexedDB mirror — app renders instantly from cache, syncs behind.
-* [ ] **3c.** Durable outbox surviving reload, tab close, crash, and OS process kill.
-* [ ] **3d.** Offline mode: full read/write locally, flush on reconnect.
-* [ ] **3e.** Multi-tab safety via `navigator.locks` + `BroadcastChannel`.
-* [ ] **3f.** Remote-change detection on window focus; "remote updated — refresh?" banner.
-* [ ] **3g.** Size tripwire — warn in Settings when `bookmarks.json` passes 700 KB, and
+* [x] **3b.** IndexedDB mirror — app renders instantly from cache, syncs behind.
+* [x] **3c.** Durable outbox surviving reload, tab close, crash, and OS process kill.
+* [x] **3d.** Offline mode: full read/write locally, flush on reconnect.
+* [x] **3e.** Multi-tab safety via `navigator.locks` + `BroadcastChannel`.
+* [x] **3f.** Remote-change detection on window focus; "remote updated — refresh?" banner.
+* [x] **3g.** Size tripwire — warn in Settings when `bookmarks.json` passes 700 KB, and
   only then implement raw media-type reads (§4.3). At the target scale (§1.1) this should
   never fire; it exists so the ceiling cannot arrive unannounced. Must also treat
   `encoding: "none"` as a hard error — silently parsing it as empty would commit over the
   whole collection.
-* [ ] **3h.** Tombstone pruning at 90 days.
-* [ ] **3i.** Request `navigator.storage.persist()` at install; expose the grant/deny state
+* [x] **3h.** Tombstone pruning at 90 days.
+* [x] **3i.** Request `navigator.storage.persist()` at install; expose the grant/deny state
   in Settings and warn whenever the outbox is non-empty without persistence (§6.3).
-* [ ] **3j.** Register a Background Sync (`sync`) handler in the service worker so a queued
+* [ ] **3j.** *(Blocked on 5a — a Background Sync handler needs a service worker, which
+  Phase 5 introduces.)* Register a Background Sync (`sync`) handler in the service worker so a queued
   save completes with the app closed; fall back to flush-on-open where unsupported (§6.1).
-* [ ] **3k.** Foreground refresh poll — ETag-conditional, default 5 minutes, running only
+* [x] **3k.** Foreground refresh poll — ETag-conditional, default 5 minutes, running only
   while `document.visibilityState === 'visible'` and suspended when hidden, offline, or
   rate-limited. Closes the stale-open-tab gap that 3f cannot cover (§6.2).
 

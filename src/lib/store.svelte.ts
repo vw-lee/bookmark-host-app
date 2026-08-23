@@ -15,6 +15,15 @@ import { emptyFile, SCHEMA_VERSION, type Bookmark, type BookmarkFile } from "./s
 import { normalizeTags, normalizeUrlKey, cleanText, tagMatches } from "./schema/normalize";
 import { ulid } from "./schema/ulid";
 import { merge, liveBookmarks } from "./sync/merge";
+import { saveMirror, loadMirror, clearMirror, type MirrorState } from "./sync/db";
+import { withWriteLock, announce, onTabMessage } from "./sync/tabs";
+import {
+  measureSize,
+  requestPersistence,
+  persistenceState,
+  type PersistenceState,
+  type SizeReport,
+} from "./sync/persistence";
 
 export type Status = "disconnected" | "loading" | "ready" | "error";
 
@@ -26,6 +35,10 @@ const MAX_URL = 2048;
 
 /** Coalesce a burst of edits into one commit (§4.4). */
 const WRITE_DEBOUNCE_MS = 3000;
+
+/** Foreground refresh interval (task 3k). Conditional, so an unchanged file costs no quota. */
+export const REFRESH_INTERVALS = [0, 60_000, 300_000, 900_000] as const;
+const DEFAULT_REFRESH_MS = 300_000;
 
 export class AppStore {
   status = $state<Status>("disconnected");
@@ -39,12 +52,24 @@ export class AppStore {
   selectedTag = $state<string | null>(null);
   showArchived = $state(false);
 
+  /** True when the browser reports no connection, or a write failed on the network (3d). */
+  offline = $state(typeof navigator !== "undefined" ? !navigator.onLine : false);
+  /** Set while the queue is parked on a rate limit; epoch ms (task 2d). */
+  parkedUntil = $state<number | null>(null);
+  persistence = $state<PersistenceState>("unsupported");
+  size = $state<SizeReport>({ bytes: 0, ratio: 0, level: "ok" });
+  refreshMs = $state<number>(DEFAULT_REFRESH_MS);
+  /** Set when another device committed and we adopted it, so the UI can say so. */
+  remoteChangedAt = $state<string | null>(null);
+
   private client: GitHubClient | null = null;
   private sha: string | null = null;
   private etag: string | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private writing = false;
   private dirty = false;
+  private teardown: (() => void)[] = [];
 
   /** Live, non-archived records matching the current search and tag filter. */
   get visible(): Bookmark[] {
@@ -94,14 +119,141 @@ export class AppStore {
     return this.client !== null;
   }
 
-  /** Try to restore a saved connection on startup. */
+  /**
+   * Startup (tasks 3b, 3c, 3d).
+   *
+   * The mirror is adopted BEFORE the network is touched, so the app renders from cache in one
+   * frame and syncs behind. If the last session left unsynced edits, they are still here — that
+   * is the whole point of persisting `dirty`.
+   */
   async restore(): Promise<void> {
+    this.installListeners();
+    void persistenceState().then((state) => (this.persistence = state));
+
+    const mirror = await loadMirror();
+    if (mirror) {
+      this.file = mirror.file;
+      this.sha = mirror.sha;
+      this.etag = mirror.etag;
+      this.dirty = mirror.dirty;
+      this.pendingCount = mirror.pending;
+      this.size = measureSize(serialize(mirror.file));
+      if (mirror.dirty) this.status = "ready";
+    }
+
     const connection = loadConnection();
     if (!connection) {
-      this.status = "disconnected";
+      // A cached collection with no token is still worth showing read-only rather than
+      // throwing the user back to a blank setup screen.
+      this.status = mirror ? "ready" : "disconnected";
       return;
     }
-    await this.connect(connection, null);
+
+    try {
+      await this.connect(connection, null);
+    } catch {
+      // Offline or expired token — the mirror already rendered, so this is not fatal.
+      if (mirror) this.status = "ready";
+    }
+  }
+
+  /** Window and cross-tab listeners. Registered once; torn down on disconnect. */
+  private installListeners(): void {
+    if (this.teardown.length > 0) return;
+
+    if (typeof window !== "undefined") {
+      const online = () => {
+        this.offline = false;
+        // Reconnecting is the moment queued work should go out (3d).
+        if (this.dirty) void this.flush();
+      };
+      const offline = () => (this.offline = true);
+      window.addEventListener("online", online);
+      window.addEventListener("offline", offline);
+      this.teardown.push(() => {
+        window.removeEventListener("online", online);
+        window.removeEventListener("offline", offline);
+      });
+    }
+
+    // Another tab committed: adopt its state rather than racing it (3e).
+    this.teardown.push(
+      onTabMessage((message) => {
+        if (message.type !== "committed") return;
+        this.file = merge(this.file, message.file);
+        this.sha = message.sha;
+        this.etag = null;
+        this.remoteChangedAt = new Date().toISOString();
+        void this.persistMirror();
+      }),
+    );
+
+    this.startRefreshTimer();
+  }
+
+  /**
+   * Foreground refresh poll (task 3k).
+   *
+   * Runs only while the document is visible and stops when hidden. Every request is
+   * ETag-conditional, so an unchanged file returns 304 and costs no rate-limit quota — which is
+   * what makes a five-minute cadence essentially free.
+   */
+  private startRefreshTimer(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.refreshMs <= 0) return;
+
+    this.refreshTimer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (!this.client || this.offline || this.writing || this.isParked()) return;
+      void this.load({ quiet: true });
+    }, this.refreshMs);
+
+    this.teardown.push(() => {
+      if (this.refreshTimer) clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    });
+  }
+
+  setRefreshInterval(ms: number): void {
+    this.refreshMs = ms;
+    this.startRefreshTimer();
+  }
+
+  /** Refresh on focus regain (task 3f). Cheap for the same reason 3k is. */
+  refreshOnFocus(): void {
+    if (!this.client || this.offline || this.writing) return;
+    void this.load({ quiet: true });
+  }
+
+  /** Ask for persistent storage; called after install (task 3i, 5h). */
+  async ensurePersistence(): Promise<PersistenceState> {
+    this.persistence = await requestPersistence();
+    return this.persistence;
+  }
+
+  /** True while the write queue is parked on a rate limit (task 2d). */
+  isParked(): boolean {
+    if (this.parkedUntil === null) return false;
+    if (Date.now() >= this.parkedUntil) {
+      this.parkedUntil = null;
+      return false;
+    }
+    return true;
+  }
+
+  /** Write the mirror. Never throws — losing the mirror must not break the app. */
+  private async persistMirror(): Promise<void> {
+    const serialized = serialize(this.file);
+    this.size = measureSize(serialized);
+    const state: MirrorState = {
+      file: this.file,
+      sha: this.sha,
+      etag: this.etag,
+      dirty: this.dirty,
+      pending: this.pendingCount,
+      savedAt: new Date().toISOString(),
+    };
+    await saveMirror(state);
   }
 
   /**
@@ -136,8 +288,13 @@ export class AppStore {
     }
   }
 
-  /** Read and validate the remote file, bootstrapping it on first run (task 1d). */
-  async load(): Promise<void> {
+  /**
+   * Read and validate the remote file, bootstrapping it on first run (task 1d).
+   *
+   * `quiet` is used by the background refresh (3k/3f): a poll that fails must not blank the
+   * screen or replace a working view with an error banner.
+   */
+  async load(options: { quiet?: boolean } = {}): Promise<void> {
     if (!this.client) return;
     this.syncing = true;
     try {
@@ -149,22 +306,40 @@ export class AppStore {
 
       const raw = result.text.trim() === "" ? emptyFile() : JSON.parse(result.text);
       const migrated = migrate(raw);
-      this.file = parseBookmarkFile(migrated);
+      const remoteFile = parseBookmarkFile(migrated);
+
+      // Local edits that have not been committed must survive a refresh. Merging rather than
+      // replacing is what makes the background poll safe to run while the outbox is dirty.
+      const changed = this.dirty
+        ? (this.file = merge(this.file, remoteFile))
+        : (this.file = remoteFile);
+      void changed;
+
+      if (options.quiet && result.sha !== this.sha) {
+        this.remoteChangedAt = new Date().toISOString();
+      }
+
       this.sha = result.sha;
       this.etag = result.etag;
       this.status = "ready";
       this.lastSyncedAt = new Date().toISOString();
+      if (!options.quiet) this.error = null;
 
       // A file written by an older build is rewritten once, so the migration cost is paid
       // exactly once rather than on every load.
       if (needsMigration(raw)) this.scheduleFlush();
+      await this.persistMirror();
     } catch (e) {
       if (e instanceof GitHubError && e.kind === "file-missing") {
         await this.bootstrap();
         return;
       }
-      this.error = e as Error;
-      this.status = "error";
+      if (e instanceof GitHubError && e.kind === "network") this.offline = true;
+      // A failed background poll leaves the working view alone.
+      if (!options.quiet) {
+        this.error = e as Error;
+        this.status = "error";
+      }
     } finally {
       this.syncing = false;
     }
@@ -182,6 +357,7 @@ export class AppStore {
     this.etag = null;
     this.status = "ready";
     this.lastSyncedAt = new Date().toISOString();
+    await this.persistMirror();
   }
 
   // ---------------------------------------------------------------- mutations
@@ -279,10 +455,17 @@ export class AppStore {
 
   // ------------------------------------------------------------------- writes
 
-  /** Debounced flush — a burst of edits becomes one commit (§4.4). */
+  /**
+   * Debounced flush — a burst of edits becomes one commit (§4.4).
+   *
+   * The mirror is written IMMEDIATELY, before the debounce; durability must not wait three
+   * seconds. Only the network write is debounced.
+   */
   private scheduleFlush(): void {
     this.dirty = true;
     this.pendingCount += 1;
+    void this.persistMirror();
+
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = setTimeout(() => void this.flush(), WRITE_DEBOUNCE_MS);
   }
@@ -294,6 +477,9 @@ export class AppStore {
   async flush(): Promise<void> {
     if (!this.client || !this.dirty) return;
     if (this.writing) return;
+    // Parked on a rate limit (task 2d) or offline (3d): the mirror already holds the changes,
+    // so there is nothing to lose by waiting.
+    if (this.isParked() || this.offline) return;
 
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -305,19 +491,35 @@ export class AppStore {
     const attemptedCount = this.pendingCount;
 
     try {
-      this.dirty = false;
-      const message =
-        attemptedCount === 1 ? "feat: update bookmarks" : `chore: sync ${attemptedCount} changes`;
-      const { sha } = await this.client.write(serialize(this.file), message, this.sha ?? undefined);
-      this.sha = sha;
-      this.etag = null; // the etag we hold is now stale by definition
-      this.pendingCount = Math.max(0, this.pendingCount - attemptedCount);
-      this.lastSyncedAt = new Date().toISOString();
-      this.error = null;
+      // Cross-tab lock (3e): two tabs holding the same sha must not both PUT.
+      await withWriteLock(async () => {
+        this.dirty = false;
+        const message =
+          attemptedCount === 1 ? "feat: update bookmarks" : `chore: sync ${attemptedCount} changes`;
+        const { sha } = await this.client!.write(
+          serialize(this.file),
+          message,
+          this.sha ?? undefined,
+        );
+        this.sha = sha;
+        this.etag = null; // the etag we hold is now stale by definition
+        this.pendingCount = Math.max(0, this.pendingCount - attemptedCount);
+        this.lastSyncedAt = new Date().toISOString();
+        this.error = null;
+        announce({ type: "committed", file: this.file, sha });
+      });
     } catch (e) {
       this.dirty = true; // nothing was committed; keep the changes queued
       if (e instanceof GitHubError && e.kind === "conflict") {
         await this.resolveConflict();
+      } else if (e instanceof GitHubError && e.kind === "rate-limit") {
+        // Park rather than hammer. retryAt comes from Retry-After or x-ratelimit-reset (§4.5).
+        this.parkedUntil = e.retryAt ?? Date.now() + 60_000;
+        this.error = e;
+        this.scheduleUnpark();
+      } else if (e instanceof GitHubError && e.kind === "network") {
+        this.offline = true;
+        this.error = null; // offline is a state, not an error the user must act on
       } else {
         this.error = e as Error;
         if (e instanceof GitHubError && e.kind === "auth") clearToken();
@@ -325,9 +527,21 @@ export class AppStore {
     } finally {
       this.writing = false;
       this.syncing = false;
+      await this.persistMirror();
       // A change that arrived mid-write still needs committing.
-      if (this.dirty && !this.error) this.scheduleFlush();
+      if (this.dirty && !this.error && !this.offline && !this.isParked()) this.scheduleFlush();
     }
+  }
+
+  /** Resume the queue when the rate-limit window closes (task 2d). */
+  private scheduleUnpark(): void {
+    if (this.parkedUntil === null) return;
+    const delay = Math.max(1000, this.parkedUntil - Date.now());
+    setTimeout(() => {
+      this.parkedUntil = null;
+      this.error = null;
+      if (this.dirty) void this.flush();
+    }, delay);
   }
 
   /**
@@ -359,7 +573,10 @@ export class AppStore {
       this.dirty = false;
       this.pendingCount = 0;
       this.lastSyncedAt = new Date().toISOString();
+      this.remoteChangedAt = new Date().toISOString();
       this.error = null;
+      announce({ type: "committed", file: this.file, sha });
+      await this.persistMirror();
     } catch (e) {
       if (e instanceof GitHubError && e.kind === "conflict") {
         await this.resolveConflict(attempt + 1);
@@ -381,6 +598,12 @@ export class AppStore {
     this.file = emptyFile();
     this.status = "disconnected";
     this.error = null;
+    this.dirty = false;
+    this.pendingCount = 0;
+    for (const off of this.teardown) off();
+    this.teardown = [];
+    void clearMirror();
+    announce({ type: "disconnected" });
   }
 }
 
