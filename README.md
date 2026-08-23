@@ -36,6 +36,42 @@ The **Sync Engine** is the heart of the system and the only genuinely hard compo
 conflict resolution, the write queue, rate-limit backoff, and offline durability. Everything
 else is a thin shell around it.
 
+
+### 1.1 Target Profile
+
+Recorded because it justifies several decisions that would otherwise look under-engineered:
+
+| Dimension | Value | Consequence |
+|-----------|-------|-------------|
+| Collection size | **Under 500 bookmarks** (~300 KB) | Comfortably inside the 1 MB Contents API ceiling. D5 stands; the Git Data API migration and sharding are deferred indefinitely. List virtualisation is unnecessary. |
+| Existing collection | **Small, to be imported** | Import stays in Phase 4. Hand-entry is adequate for testing until then. |
+| Platforms | **Desktop, Android, iOS/iPadOS, and e-ink** | Full Phase 5 is justified. E-ink is a real target, not a theme (§1.2). |
+| Origin | **`username.github.io`** — no custom domain (D10) | Shared-origin exposure (§5.1) is live and permanent. D8 resolves to the constrained branch of §5.5. |
+
+At this scale the interesting problems are **correctness and trust**, not throughput: never
+losing a bookmark, never resurrecting a deleted one, never leaking the token. Performance work
+is explicitly not where effort belongs.
+
+### 1.2 E-Ink Is a First-Class Constraint
+
+E-ink was originally filed under Phase 7 polish. With a real device in the mix that is wrong —
+these are foundational and cannot be retrofitted onto a finished UI:
+
+* **No animation or transition, anywhere.** Not reduced by preference — absent by default,
+  with motion enabled only on displays that benefit. E-ink renders animation as smearing.
+* **No spinners or skeleton loaders.** Every loading state is static text (`Syncing…`,
+  `Offline — 3 queued`). A spinner on e-ink is a strobing artefact.
+* **Pagination, not virtual scrolling.** Continuous scroll forces partial refreshes and
+  produces ghosting. Discrete pages map onto how e-ink actually repaints — and at under 500
+  bookmarks, virtualisation buys nothing anyway. This supersedes 7c.
+* **Pure black on pure white in e-ink mode.** No grey text, no low-contrast secondary labels,
+  no colour-only signalling. Borders and weight carry hierarchy instead.
+* **No hover-dependent affordances.** Every action must be reachable by tap and by keyboard.
+* **Large hit targets and static layout.** Nothing that reflows or shifts after paint.
+
+Practically, e-ink readers are Android-based, so the Phase 5 Android work covers the device —
+but the interface must be built to these rules from 1e onward, not adjusted later.
+
 ---
 
 ## 2. Architectural Decisions
@@ -49,14 +85,16 @@ before the phase that depends on them begins.
 | D2 | Styling | **Tailwind CSS** | Token-driven theming for dark / e-ink high-contrast modes. |
 | D3 | Storage target | **Private repo only — no Gists** | Secret Gists are readable by anyone with the URL, and fine-grained PAT support for the Gists API is limited. |
 | D4 | API layer | **Hand-rolled `fetch` wrapper** | `@octokit/rest` is heavy for the ~6 endpoints used, and we need custom retry/ETag logic anyway. |
-| D5 | Write API | **Contents API in Phase 2, Git Data API from Phase 4** | Contents API is simpler to ship; Git Data API removes the 1 MB ceiling and enables multi-file atomic commits. |
+| D5 | Write API | **Contents API. Git Data API deferred indefinitely** | At under 500 bookmarks (§1.1) the 1 MB ceiling is ~3x away. Revisit only if the file passes 700 KB; 3g is the tripwire. |
 | D6 | Conflict model | **Per-record last-write-wins with tombstones** | A true CRDT is overkill for single-user multi-device. Field-level merge may come later. |
 | D7 | Local cache | **IndexedDB mirror + durable outbox** | Optimistic UI without durable queueing loses data on failed commits. |
-| D8 | Token storage | **REOPENED — conditional on origin and install state** | A flat `sessionStorage` default is unusable on mobile: Android kills backgrounded PWAs and the token vanishes with the context. See the matrix in §5.5. |
+| D8 | Token storage | **RESOLVED — `sessionStorage` default, `localStorage` opt-in behind an explicit warning** | D10 answered "no custom domain", so §5.5's `*.github.io` branch applies. The mobile friction is real and is the honest cost of a shared origin; D13 proposes a mitigation. |
 | D9 | Hosting | **GitHub Pages via `actions/deploy-pages`** | Official path; the `gh-pages` branch pattern is deprecated. |
-| D10 | Custom domain | **OPEN — now blocks D8** | Owning the origin is what makes persistent token storage safe (§5.1, §5.5). Without it, mobile users must choose between re-authenticating constantly and storing a token on a shared origin. |
+| D10 | Custom domain | **RESOLVED — no. Hosting on `username.github.io`** | Accepted consequence: the §5.1 shared-origin exposure is permanent, and D8 takes its constrained form. A dedicated GitHub account for hosting remains the cheapest way to shrink it. |
 | D11 | Encryption at rest | **OPEN — default NO** | Zero-knowledge encryption would kill readable diffs and rule out Actions-based enrichment (§9). |
 | D12 | Taxonomy | **Tags only, `/`-delimited, lowercase canonical, descendant-inclusive filtering** | Folders and tags were two overlapping taxonomies. Derived tree nodes make an inconsistent hierarchy unrepresentable (§3.3). |
+| D13 | Token at rest | **OPEN — PIN-wrapped `localStorage` proposed** | Would replace re-pasting a 93-character PAT with a short PIN while keeping sibling pages on the shared origin locked out. Needs sign-off before Phase 1b. |
+| D14 | E-ink support | **Foundational UI constraint, not a Phase 7 theme** | A real e-ink device is in the target set (§1.1). No-animation, no-spinner, paginated, pure-contrast rules cannot be retrofitted (§1.2). |
 
 ---
 
@@ -498,7 +536,9 @@ been saved, when the value is obvious.
 * [ ] **1b.** Token store honouring D8 (`sessionStorage` default, `localStorage` opt-in).
 * [ ] **1c.** Read path: fetch, decode, validate, migrate, hydrate store; cache the ETag.
 * [ ] **1d.** Bootstrap flow — create `data/bookmarks.json` when the path 404s.
-* [ ] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder.
+* [ ] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder. Built
+  to the §1.2 e-ink rules from the start — no animation, static loading text, paginated,
+  no hover-only affordances.
 * [ ] **1f.** Instant local search across title / URL / description / tags, debounced,
   ranked (title match beats description match).
 * [ ] **1g.** Tag tree sidebar built by splitting stored tags on `/` — derived nodes only,
@@ -535,7 +575,9 @@ been saved, when the value is obvious.
 * [ ] **3d.** Offline mode: full read/write locally, flush on reconnect.
 * [ ] **3e.** Multi-tab safety via `navigator.locks` + `BroadcastChannel`.
 * [ ] **3f.** Remote-change detection on window focus; "remote updated — refresh?" banner.
-* [ ] **3g.** Raw media-type reads (`Accept: application/vnd.github.raw`) to clear 1 MB.
+* [ ] **3g.** Size tripwire — warn in Settings when `bookmarks.json` passes 700 KB, and
+  only then implement raw media-type reads. At the target scale (§1.1) this should never
+  fire; it exists so the ceiling cannot arrive unannounced.
 * [ ] **3h.** Tombstone pruning at 90 days.
 * [ ] **3i.** Request `navigator.storage.persist()` at install; expose the grant/deny state
   in Settings and warn whenever the outbox is non-empty without persistence (§6.3).
@@ -547,7 +589,8 @@ been saved, when the value is obvious.
 
 ## 11. Phase 4 — Scale & Portability
 
-* [ ] **4a.** Migrate writes to the Git Data API (blob -> tree -> commit -> ref).
+* [ ] ~~**4a.** Migrate writes to the Git Data API.~~ **Deferred indefinitely** (D5) — the
+  Contents API is sufficient under 500 bookmarks. Reinstate only if 3g fires.
 * [ ] **4b.** Import: Netscape bookmarks HTML (every browser exports this format).
 * [ ] **4c.** Import: Raindrop / Pocket / Pinboard JSON + generic CSV.
 * [ ] **4d.** Export: Netscape HTML and raw JSON. No lock-in, by design.
@@ -600,9 +643,12 @@ runs server-side in the repo itself, which costs nothing and needs no infrastruc
 ## 14. Phase 7 — UX Polish
 
 * [ ] **7a.** Command palette (`Cmd/Ctrl-K`) — add, search, filter, jump, all keyboard.
-* [ ] **7b.** Theme system: light, dark, and **e-ink high-contrast** (no greys, no
-  animation, maximum contrast).
-* [ ] **7c.** Virtualized list so 10,000+ bookmarks stay smooth.
+* [ ] **7b.** Theme system: light, dark, and **e-ink** (pure black on white, no greys, no
+  colour-only signalling). The e-ink *behaviour* rules land in Phase 1 per D14; this task
+  is only the palette layer on top of them.
+* [ ] **7c.** Pagination with keyboard and tap navigation — **not** virtual scrolling.
+  Continuous scroll causes e-ink ghosting (§1.2), and under 500 bookmarks virtualisation
+  buys nothing.
 * [ ] **7d.** Accessibility: full keyboard navigation, focus management, ARIA, reduced-motion.
 * [ ] **7e.** Onboarding that states the git-history privacy caveat (§5.3) plainly.
 * [ ] **7f.** Settings: token storage mode (§5.5, showing which mode is active and why),
@@ -619,6 +665,8 @@ Recorded so scope stays honest:
 * **No full-text page archiving.** Bookmarks are pointers, not copies.
 * **No browser extension** before Phase 7 — the bookmarklet and PWA cover capture.
 * **No server component, ever.** If a feature needs one, it belongs in a GitHub Action.
+* **No performance engineering for scale we do not have.** Virtualisation, sharding, and
+  the Git Data API are all out until 3g says otherwise (§1.1).
 * **No background polling and no push notifications.** The app syncs when opened and
   flushes queued writes on reconnect — nothing more (§6).
 
@@ -626,11 +674,17 @@ Recorded so scope stays honest:
 
 ## 16. Open Questions
 
-1. **Custom domain (D10)? — now the highest-priority question.** It gates D8: owning the
-   origin is what allows a persistent token without the §5.1 shared-origin exposure, and
-   therefore decides whether the installed mobile app can be both usable and safe (§5.5).
-   Requires a domain you control.
-2. **Encryption at rest (D11)?** Default is off. Turning it on forfeits readable diffs and
-   all Phase 6 automation.
-3. **Repo layout** — dedicated bookmarks repo, or `data/` inside an existing private repo?
-   Assumed dedicated.
+1. **D13 — PIN-wrapped token storage?** With D10 resolved as "no custom domain", the honest
+   default (D8) makes mobile users re-paste a 93-character PAT after every cold launch.
+   Wrapping the token with a short PIN via WebCrypto (PBKDF2 -> AES-GCM) would reduce that to
+   typing a PIN, while leaving a sibling page on the shared origin holding ciphertext it
+   cannot open. It does **not** defend against XSS inside this app after unlock — nothing
+   client-side does. Needs sign-off before 1b.
+2. **D11 — encryption at rest?** Still defaulted off. Turning it on forfeits readable diffs
+   and all Phase 6 automation. Note this is a *different* question from D13: D13 protects the
+   token, D11 protects the bookmarks.
+3. **Hosting account.** With D10 settled, a **dedicated GitHub account** for the app repo is
+   the remaining cheap mitigation for §5.1 — it empties the shared origin of anything else
+   that could be attacked. Costs nothing but a second login.
+4. **Repo layout.** Assumed: public app repo (Pages on a private repo requires a paid plan,
+   and the app ships no secrets) plus a separate private data repo. Confirm.
