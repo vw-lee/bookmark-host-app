@@ -45,33 +45,37 @@ Recorded because it justifies several decisions that would otherwise look under-
 |-----------|-------|-------------|
 | Collection size | **Under 500 bookmarks** (~300 KB) | Comfortably inside the 1 MB Contents API ceiling. D5 stands; the Git Data API migration and sharding are deferred indefinitely. List virtualisation is unnecessary. |
 | Existing collection | **Small, to be imported** | Import stays in Phase 4. Hand-entry is adequate for testing until then. |
-| Platforms | **Desktop, Android, iOS/iPadOS, and e-ink** | Full Phase 5 is justified. E-ink is a real target, not a theme (§1.2). |
+| Platforms | **Desktop, Android, iOS/iPadOS, and e-ink** | Full Phase 5 is justified. E-ink is a real device but its support is deferred to Phase 7 by decision (D14, §1.2). |
 | Origin | **`username.github.io`** — no custom domain (D10) | Shared-origin exposure (§5.1) is live and permanent. D8 resolves to the constrained branch of §5.5. |
 
 At this scale the interesting problems are **correctness and trust**, not throughput: never
 losing a bookmark, never resurrecting a deleted one, never leaking the token. Performance work
 is explicitly not where effort belongs.
 
-### 1.2 E-Ink Is a First-Class Constraint
+### 1.2 E-Ink Support — Deferred to Phase 7
 
-E-ink was originally filed under Phase 7 polish. With a real device in the mix that is wrong —
-these are foundational and cannot be retrofitted onto a finished UI:
+E-ink is a real target device (§1.1) but is **explicitly deferred to Phase 7 polish** by
+decision (D14). The MVP is built for conventional displays; the rules below are the Phase 7
+specification, recorded now so the work is scoped rather than rediscovered.
 
-* **No animation or transition, anywhere.** Not reduced by preference — absent by default,
-  with motion enabled only on displays that benefit. E-ink renders animation as smearing.
-* **No spinners or skeleton loaders.** Every loading state is static text (`Syncing…`,
+* **No animation or transition** in e-ink mode. E-ink renders animation as smearing.
+* **No spinners or skeleton loaders** — loading states become static text (`Syncing…`,
   `Offline — 3 queued`). A spinner on e-ink is a strobing artefact.
-* **Pagination, not virtual scrolling.** Continuous scroll forces partial refreshes and
-  produces ghosting. Discrete pages map onto how e-ink actually repaints — and at under 500
-  bookmarks, virtualisation buys nothing anyway. This supersedes 7c.
-* **Pure black on pure white in e-ink mode.** No grey text, no low-contrast secondary labels,
-  no colour-only signalling. Borders and weight carry hierarchy instead.
-* **No hover-dependent affordances.** Every action must be reachable by tap and by keyboard.
-* **Large hit targets and static layout.** Nothing that reflows or shifts after paint.
+* **Pure black on pure white.** No grey text, no low-contrast secondary labels, no
+  colour-only signalling; borders and weight carry hierarchy instead.
+* **No hover-dependent affordances** — every action reachable by tap and by keyboard.
+* **Large hit targets, static layout** — nothing that reflows after paint.
 
-Practically, e-ink readers are Android-based, so the Phase 5 Android work covers the device —
-but the interface must be built to these rules from 1e onward, not adjusted later.
+**Two habits make the deferral cheap**, and cost nothing during the MVP:
 
+* Put every colour behind a **design token** from 1e onward. The Phase 7 e-ink theme then
+  becomes a palette swap rather than an audit of every component.
+* Don't add animation that would only have to be removed. Motion is not an MVP requirement,
+  so declining to build it is free.
+
+The remainder — pagination, contrast, hit targets — is genuinely retrofittable and does not
+need to shape the MVP. Note that **pagination is in the MVP regardless** (7c), justified by
+scale alone: under 500 bookmarks, virtualisation buys nothing.
 ---
 
 ## 2. Architectural Decisions
@@ -94,7 +98,7 @@ before the phase that depends on them begins.
 | D11 | Encryption at rest | **OPEN — default NO** | Zero-knowledge encryption would kill readable diffs and rule out Actions-based enrichment (§9). |
 | D12 | Taxonomy | **Tags only, `/`-delimited, lowercase canonical, descendant-inclusive filtering** | Folders and tags were two overlapping taxonomies. Derived tree nodes make an inconsistent hierarchy unrepresentable (§3.3). |
 | D13 | Token at rest | **OPEN — PIN-wrapped `localStorage` proposed** | Would replace re-pasting a 93-character PAT with a short PIN while keeping sibling pages on the shared origin locked out. Needs sign-off before Phase 1b. |
-| D14 | E-ink support | **Foundational UI constraint, not a Phase 7 theme** | A real e-ink device is in the target set (§1.1). No-animation, no-spinner, paginated, pure-contrast rules cannot be retrofitted (§1.2). |
+| D14 | E-ink support | **Deferred to Phase 7 polish, after the MVP** | User decision. Two zero-cost habits during the MVP keep the deferral cheap: colour behind design tokens, and no animation built that would only be removed (§1.2). |
 
 ---
 
@@ -291,14 +295,63 @@ The spread in `String.fromCharCode(...bytes)` blows the call stack on large arra
 
 ### 4.3 The 1 MB Ceiling
 
-`GET .../contents/` stops populating the `content` field above **1 MB** and refuses files
-above 100 MB entirely. At roughly 600 bytes per bookmark that is a hard wall at
-**~1,500–2,000 bookmarks**. Mitigations, in order of application:
+#### Why it exists
 
-1. Read with `Accept: application/vnd.github.raw` (Phase 3).
-2. Move writes to the Git Data API (Phase 4).
-3. Shard into `data/bookmarks-{00..0f}.json` by `id` prefix if a single file becomes
-   unwieldy (deferred; only if real usage demands it).
+`GET /repos/{owner}/{repo}/contents/{path}` returns file content **inlined as a base64 string
+inside a JSON response**. GitHub will not inline an arbitrarily large file, so the endpoint
+behaves in three bands:
+
+| File size | Behaviour |
+|-----------|-----------|
+| **≤ 1 MB** | Fully supported. `content` holds the base64 payload, `encoding` is `"base64"`. |
+| **1–100 MB** | The request still succeeds, but `content` comes back as an **empty string** and `encoding` as `"none"`. Only the raw and object media types return the actual bytes. |
+| **> 100 MB** | The endpoint does not support the file at all. The Git Data blobs API is the only route. |
+
+The failure mode is what makes this dangerous: crossing 1 MB does not produce an error. It
+produces a **successful response containing an empty file**, which a naive client will happily
+parse as "no bookmarks" and then commit back over the real data. Any implementation must treat
+`encoding: "none"` as a hard error, never as empty content.
+
+Two aggravating factors specific to this design:
+
+* **Base64 inflates payloads by ~33%.** A 1 MB file is ~1.37 MB on the wire, in both
+  directions.
+* **The whole file is rewritten on every change.** Cost scales with total collection size, not
+  with the size of the edit — adding one bookmark to a 900 KB file uploads 900 KB.
+
+At roughly 600 bytes per record, the wall sits at **~1,700 bookmarks**. Against the target of
+under 500 (~300 KB), there is roughly 3x headroom, which is why D5 defers the fix and 3g
+merely watches for it.
+
+#### Workarounds, cheapest first
+
+1. **Read with `Accept: application/vnd.github.raw`.** Returns the bytes directly — no JSON
+   wrapper, no base64, no 33% inflation. Covers 1–100 MB. *Trade-off:* the raw response does
+   not carry the blob `sha` that the next `PUT` requires, so the sha must come from a separate
+   conditional request. One extra round trip, and the `sha` and content must be captured
+   together or a write can be built on a mismatched pair.
+2. **Read via the Git Data blobs API** — `GET /repos/{o}/{r}/git/blobs/{sha}` with the raw
+   media type, supporting up to 100 MB. Needs the blob sha from the tree API first, so it
+   costs more round trips than option 1 for no gain below 100 MB.
+3. **Write via the Git Data API** — create blob, create tree, create commit, update ref. Four
+   requests instead of one, but no size ceiling and **atomic multi-file commits**, which is a
+   prerequisite for sharding.
+4. **Split hot from cold.** Keep recent bookmarks in `bookmarks.json` and move archived ones
+   to `archive.json`, loaded lazily. Simple, and it shrinks the file rewritten on every edit.
+5. **Shard by id prefix** — `bookmarks-{00..0f}.json`. Only the touched shard is rewritten, so
+   writes get smaller and conflicts get rarer. Costs: requires option 3 for atomicity,
+   complicates the merge algorithm, and search must load every shard.
+6. **Trim the record.** Descriptions and notes are the bulk of the payload; moving them to a
+   side file keyed by id would cut the main file several-fold. Favicons must stay as URLs —
+   inlining them as data URIs would blow the ceiling almost immediately.
+
+#### Rejected
+
+* **Compression (gzip the JSON, store as binary).** Would multiply headroom, but destroys
+  readable diffs and merge-friendliness — the entire reason for using git as the store.
+* **`raw.githubusercontent.com`.** Serves raw files without the API's size limits, but does
+  not return permissive CORS headers for authenticated private-repo requests, so it is not
+  reachable from browser JavaScript. Not an option here.
 
 ### 4.4 Rate Limits & The Write Queue
 
@@ -536,9 +589,8 @@ been saved, when the value is obvious.
 * [ ] **1b.** Token store honouring D8 (`sessionStorage` default, `localStorage` opt-in).
 * [ ] **1c.** Read path: fetch, decode, validate, migrate, hydrate store; cache the ETag.
 * [ ] **1d.** Bootstrap flow — create `data/bookmarks.json` when the path 404s.
-* [ ] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder. Built
-  to the §1.2 e-ink rules from the start — no animation, static loading text, paginated,
-  no hover-only affordances.
+* [ ] **1e.** Bookmark list UI: title, host, description, tags, favicon placeholder. Colours
+  behind design tokens so the Phase 7 e-ink theme is a palette swap, not an audit (§1.2).
 * [ ] **1f.** Instant local search across title / URL / description / tags, debounced,
   ranked (title match beats description match).
 * [ ] **1g.** Tag tree sidebar built by splitting stored tags on `/` — derived nodes only,
@@ -576,8 +628,10 @@ been saved, when the value is obvious.
 * [ ] **3e.** Multi-tab safety via `navigator.locks` + `BroadcastChannel`.
 * [ ] **3f.** Remote-change detection on window focus; "remote updated — refresh?" banner.
 * [ ] **3g.** Size tripwire — warn in Settings when `bookmarks.json` passes 700 KB, and
-  only then implement raw media-type reads. At the target scale (§1.1) this should never
-  fire; it exists so the ceiling cannot arrive unannounced.
+  only then implement raw media-type reads (§4.3). At the target scale (§1.1) this should
+  never fire; it exists so the ceiling cannot arrive unannounced. Must also treat
+  `encoding: "none"` as a hard error — silently parsing it as empty would commit over the
+  whole collection.
 * [ ] **3h.** Tombstone pruning at 90 days.
 * [ ] **3i.** Request `navigator.storage.persist()` at install; expose the grant/deny state
   in Settings and warn whenever the outbox is non-empty without persistence (§6.3).
@@ -643,12 +697,12 @@ runs server-side in the repo itself, which costs nothing and needs no infrastruc
 ## 14. Phase 7 — UX Polish
 
 * [ ] **7a.** Command palette (`Cmd/Ctrl-K`) — add, search, filter, jump, all keyboard.
-* [ ] **7b.** Theme system: light, dark, and **e-ink** (pure black on white, no greys, no
-  colour-only signalling). The e-ink *behaviour* rules land in Phase 1 per D14; this task
-  is only the palette layer on top of them.
+* [ ] **7b.** Theme system: light, dark, and **e-ink** — the full §1.2 specification:
+  pure black on white, no greys, no colour-only signalling, no animation, static loading
+  text in place of spinners, no hover-only affordances, large hit targets.
 * [ ] **7c.** Pagination with keyboard and tap navigation — **not** virtual scrolling.
-  Continuous scroll causes e-ink ghosting (§1.2), and under 500 bookmarks virtualisation
-  buys nothing.
+  Under 500 bookmarks virtualisation buys nothing (§1.1), and pagination is additionally
+  what e-ink wants in Phase 7.
 * [ ] **7d.** Accessibility: full keyboard navigation, focus management, ARIA, reduced-motion.
 * [ ] **7e.** Onboarding that states the git-history privacy caveat (§5.3) plainly.
 * [ ] **7f.** Settings: token storage mode (§5.5, showing which mode is active and why),
