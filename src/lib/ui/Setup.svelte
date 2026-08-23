@@ -10,6 +10,7 @@
   import { store } from "../store.svelte";
   import { loadTarget, type StorageMode } from "../api/tokenStore";
   import { GitHubError } from "../api/errors";
+  import { errorLog } from "./errorLog.svelte";
 
   const saved = loadTarget();
 
@@ -20,21 +21,63 @@
   let mode = $state<StorageMode>("session");
   let busy = $state(false);
   let message = $state<string | null>(null);
+  let detail = $state<string | null>(null);
+  /** Which step the attempt reached, so a failure says where it stopped rather than just that it did. */
+  let step = $state<string | null>(null);
 
   const tokenUrl = "https://github.com/settings/personal-access-tokens/new";
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     message = null;
+    detail = null;
     busy = true;
+    step = "Checking the repository…";
+
+    const trimmed = {
+      token: token.trim(),
+      owner: owner.trim(),
+      repo: repo.trim(),
+      path: path.trim(),
+    };
+
+    // Validate before any network call, so an obvious mistake is named immediately rather
+    // than coming back as a confusing 404 from GitHub.
+    if (!trimmed.owner || !trimmed.repo) {
+      message = "Enter both the owner and the repository name.";
+      busy = false;
+      step = null;
+      return;
+    }
+    if (trimmed.owner.includes("/") || trimmed.repo.includes("/")) {
+      message = 'Enter the owner and repository separately — for example "victor" and "bookmarks", not "victor/bookmarks".';
+      busy = false;
+      step = null;
+      return;
+    }
+    if (!trimmed.token) {
+      message = "Paste your access token.";
+      busy = false;
+      step = null;
+      return;
+    }
+
     try {
-      await store.connect(
-        { token: token.trim(), owner: owner.trim(), repo: repo.trim(), path: path.trim() },
-        mode,
-      );
+      await store.connect(trimmed, mode);
       token = "";
+      step = null;
     } catch (e) {
-      message = e instanceof GitHubError ? e.message : ((e as Error).message ?? "Connection failed");
+      if (e instanceof GitHubError) {
+        message = e.message;
+        detail = `${e.kind}${e.status ? ` (HTTP ${e.status})` : ""} — ${trimmed.owner}/${trimmed.repo}`;
+      } else {
+        const err = e as Error;
+        message = err?.message || "Something went wrong and the app could not say what.";
+        detail = err?.stack ?? String(e);
+        // Anything untyped reaching here is a bug, not a user mistake — record it centrally.
+        errorLog.push("Connection failed unexpectedly", e);
+      }
+      step = null;
     } finally {
       busy = false;
     }
@@ -149,9 +192,19 @@
         </fieldset>
 
         {#if message}
-          <p class="rounded border border-[var(--color-danger)] px-3 py-2 text-sm text-[var(--color-danger)]">
-            {message}
-          </p>
+          <div class="rounded border border-[var(--color-danger)] px-3 py-2 text-sm text-[var(--color-danger)]">
+            <p>{message}</p>
+            {#if detail}
+              <details class="mt-1">
+                <summary class="cursor-pointer text-xs">Technical detail</summary>
+                <pre class="mt-1 overflow-x-auto text-xs whitespace-pre-wrap">{detail}</pre>
+              </details>
+            {/if}
+          </div>
+        {/if}
+
+        {#if busy && step}
+          <p class="text-sm text-[var(--color-ink-soft)]">{step}</p>
         {/if}
 
         <button

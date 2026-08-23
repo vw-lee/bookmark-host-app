@@ -17,7 +17,10 @@ export const CSP = [
   "script-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
-  "form-action 'none'",
+  // 'self' rather than 'none': the app has real forms, and while every handler calls
+  // preventDefault, a policy that would break submission if one ever did not is a trap.
+  // Exfiltration to another origin is still blocked.
+  "form-action 'self'",
   "frame-ancestors 'none'",
 ].join("; ");
 

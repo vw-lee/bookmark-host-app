@@ -16,6 +16,7 @@
   import Settings from "./lib/ui/Settings.svelte";
   import ImportExport from "./lib/ui/ImportExport.svelte";
   import InstallPrompt from "./lib/ui/InstallPrompt.svelte";
+  import ErrorBanner from "./lib/ui/ErrorBanner.svelte";
   import {
     registerServiceWorker,
     requestBackgroundSync,
@@ -92,6 +93,8 @@
 
 <svelte:window onkeydown={onKeydown} />
 <svelte:document onvisibilitychange={onVisibilityChange} />
+
+<ErrorBanner />
 
 {#if store.booting}
   <p class="p-8 text-sm text-[var(--color-ink-soft)]">Starting…</p>

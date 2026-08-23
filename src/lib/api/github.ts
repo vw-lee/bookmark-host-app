@@ -34,11 +34,19 @@ export interface RateLimit {
 export class GitHubClient {
   private lastRateLimit: RateLimit = { remaining: null, resetAt: null };
 
+  private readonly fetchImpl: typeof fetch;
+
   constructor(
     private readonly token: string,
     private readonly target: RepoTarget,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    fetchImpl?: typeof fetch,
+  ) {
+    // BROWSER-ONLY BUG, invisible to tests: `fetch` is a WebIDL operation on Window, so
+    // calling it with any other receiver — which `this.fetchImpl(...)` does — throws
+    // "Illegal invocation" in Chrome and Safari. Node's fetch and jsdom's are lenient, so no
+    // test would ever have caught this. Bind it to the global explicitly.
+    this.fetchImpl = fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
+  }
 
   get rateLimit(): RateLimit {
     return this.lastRateLimit;
