@@ -27,13 +27,13 @@
 </script>
 
 {#if store.offline}
-  <p class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+  <p role="status" aria-live="polite" class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
     Offline. {store.pendingCount > 0
       ? `${store.pendingCount} change${store.pendingCount === 1 ? "" : "s"} saved here and waiting to sync.`
       : "Changes are saved here and will sync when you reconnect."}
   </p>
 {:else if store.parkedUntil !== null && parkedSeconds > 0}
-  <p class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+  <p role="status" aria-live="polite" class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
     GitHub rate limit reached. Syncing resumes in {parkedSeconds}s — nothing is lost.
   </p>
 {/if}

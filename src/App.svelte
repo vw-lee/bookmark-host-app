@@ -19,6 +19,9 @@
   import BulkTools from "./lib/ui/BulkTools.svelte";
   import InstallPrompt from "./lib/ui/InstallPrompt.svelte";
   import ErrorBanner from "./lib/ui/ErrorBanner.svelte";
+  import CommandPalette from "./lib/ui/CommandPalette.svelte";
+  import Pager from "./lib/ui/Pager.svelte";
+  import { theme } from "./lib/ui/theme.svelte";
   import {
     registerServiceWorker,
     requestBackgroundSync,
@@ -32,10 +35,24 @@
   let settingsOpen = $state(false);
   let ioOpen = $state(false);
   let bulkOpen = $state(false);
+  let paletteOpen = $state(false);
   let installAvailable = $state(false);
   let installDismissed = $state(false);
   let sharedNotice = $state<string | null>(null);
   let searchInput = $state<HTMLInputElement | null>(null);
+
+  // Applied before anything paints, so there is no flash of the wrong theme.
+  $effect(() => {
+    theme.apply();
+  });
+
+  // A filter change can shrink the list past the current page.
+  $effect(() => {
+    void store.query;
+    void store.selectedTag;
+    void store.showArchived;
+    store.page = 0;
+  });
 
   $effect(() => {
     void (async () => {
@@ -64,14 +81,20 @@
   function onKeydown(event: KeyboardEvent) {
     const inField = ["INPUT", "TEXTAREA"].includes((event.target as HTMLElement)?.tagName);
 
+    // Ctrl/Cmd-K opens the palette; Ctrl/Cmd-Shift-K jumps straight to adding.
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      adding = true;
+      if (event.shiftKey) adding = true;
+      else paletteOpen = true;
       return;
     }
     if (event.key === "/" && !inField) {
       event.preventDefault();
       searchInput?.focus();
+    }
+    if (event.key === "?" && !inField) {
+      event.preventDefault();
+      paletteOpen = true;
     }
   }
 
@@ -107,6 +130,14 @@
   <Setup />
 {:else}
   <div class="flex min-h-dvh flex-col">
+    <!-- Task 7d: first tab stop jumps past the header controls to the list. -->
+    <a
+      href="#bookmark-list"
+      class="sr-only focus:not-sr-only focus:absolute focus:z-70 focus:m-2 focus:rounded focus:bg-[var(--color-surface-raised)] focus:px-3 focus:py-2"
+    >
+      Skip to bookmarks
+    </a>
+
     <header class="flex items-center gap-3 border-b border-[var(--color-border)] px-4 py-3">
       <h1 class="font-semibold">Bookmarks</h1>
 
@@ -125,7 +156,11 @@
         Add
       </button>
 
-      <span class="w-28 text-right text-xs text-[var(--color-ink-soft)]">
+      <span
+        class="w-28 text-right text-xs text-[var(--color-ink-soft)]"
+        role="status"
+        aria-live="polite"
+      >
         {#if store.syncing}
           Syncing…
         {:else if store.pendingCount > 0}
@@ -204,18 +239,23 @@
           onSelect={(tag) => (store.selectedTag = tag)}
         />
 
-        <main class="flex-1">
+        <main class="flex-1" id="bookmark-list" aria-label="Bookmarks">
           {#if store.visible.length === 0}
             <p class="p-8 text-sm text-[var(--color-ink-soft)]">
               {#if total === 0}
-                No bookmarks yet. Press <kbd class="rounded border border-[var(--color-border)] px-1">Ctrl</kbd>
-                +<kbd class="rounded border border-[var(--color-border)] px-1">K</kbd> to add one.
+                No bookmarks yet. Press
+                <kbd class="rounded border border-[var(--color-border)] px-1">Ctrl</kbd>
+                +<kbd class="rounded border border-[var(--color-border)] px-1">Shift</kbd>
+                +<kbd class="rounded border border-[var(--color-border)] px-1">K</kbd> to add one,
+                or <kbd class="rounded border border-[var(--color-border)] px-1">Ctrl</kbd>
+                +<kbd class="rounded border border-[var(--color-border)] px-1">K</kbd> for all
+                commands.
               {:else}
                 Nothing matches that filter.
               {/if}
             </p>
           {:else}
-            {#each store.visible as bookmark (bookmark.id)}
+            {#each store.pageItems as bookmark (bookmark.id)}
               <BookmarkRow
                 {bookmark}
                 onTag={(tag) => (store.selectedTag = tag)}
@@ -224,6 +264,7 @@
               />
             {/each}
           {/if}
+          <Pager />
         </main>
       </div>
     {/if}
@@ -244,4 +285,14 @@
 
 {#if bulkOpen}
   <BulkTools onClose={() => (bulkOpen = false)} />
+{/if}
+
+{#if paletteOpen}
+  <CommandPalette
+    onClose={() => (paletteOpen = false)}
+    onAdd={() => (adding = true)}
+    onImport={() => (ioOpen = true)}
+    onTools={() => (bulkOpen = true)}
+    onSettings={() => (settingsOpen = true)}
+  />
 {/if}

@@ -1,0 +1,33 @@
+# Task 6d — optional Wayback Machine archival.
+#
+# DISABLED BY DEFAULT. Submitting a URL to the Internet Archive makes the fact that you
+# bookmarked it publicly observable, which matters for a collection stored in a private
+# repository (§5.3). Enable it deliberately by uncommenting the schedule below.
+#
+# Belongs in the DATA repository alongside enrich.yml.
+name: Archive to Wayback
+
+on:
+  # schedule:
+  #   - cron: "0 7 * * 1" # Mondays, 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Archive bookmarks added in the last N days"
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Submit recent bookmarks
+        run: |
+          node scripts/archive.mjs data/bookmarks.json \
+            --days "${{ github.event.inputs.days || 7 }}" >> "$GITHUB_STEP_SUMMARY"

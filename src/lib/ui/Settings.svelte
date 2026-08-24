@@ -8,6 +8,7 @@
   import { store, REFRESH_INTERVALS } from "../store.svelte";
   import { getStorageMode } from "../api/tokenStore";
   import { formatBytes } from "../sync/persistence";
+  import { theme, type Theme } from "./theme.svelte";
 
   interface Props {
     onClose: () => void;
@@ -59,6 +60,27 @@
       <h2 class="font-semibold">Settings</h2>
       <button class="text-sm underline" onclick={onClose}>Close</button>
     </div>
+
+    <section class="mt-5">
+      <h3 class="text-sm font-medium">Appearance</h3>
+      <p class="mt-1 text-sm text-[var(--color-ink-soft)]">
+        E-ink cannot be detected automatically — no browser reports the panel type — so choose it
+        here. It removes animation entirely, drops greys, and enlarges hit targets.
+      </p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        {#each [["system", "System"], ["light", "Light"], ["dark", "Dark"], ["eink", "E-ink"]] as [value, label] (value)}
+          <button
+            class="rounded border px-3 py-1.5 text-sm {theme.current === value
+              ? 'border-[var(--color-accent)] font-medium'
+              : 'border-[var(--color-border)]'}"
+            aria-pressed={theme.current === value}
+            onclick={() => theme.set(value as Theme)}
+          >
+            {label}
+          </button>
+        {/each}
+      </div>
+    </section>
 
     <section class="mt-5">
       <h3 class="text-sm font-medium">Token storage</h3>
@@ -130,6 +152,17 @@
       >
         {copied ? "Copied" : "Copy"}
       </button>
+    </section>
+
+    <section class="mt-5">
+      <h3 class="text-sm font-medium">Privacy</h3>
+      <p class="mt-1 text-sm text-[var(--color-ink-soft)]">
+        Your bookmarks live in a private repository, so nobody else can read them. But deleting
+        a bookmark removes it from the current file, <strong>not from the repository's
+        history</strong> — every URL you have ever saved stays recoverable from past commits.
+        Removing something permanently means rewriting that history or starting a fresh
+        repository.
+      </p>
     </section>
 
     <section class="mt-5">

@@ -69,6 +69,13 @@ export class AppStore {
   selectedTag = $state<string | null>(null);
   showArchived = $state(false);
 
+  /**
+   * Pagination (task 7c) — not virtual scrolling. Under 500 bookmarks virtualisation buys
+   * nothing (§1.1), and continuous scroll causes ghosting on e-ink (§1.2).
+   */
+  page = $state(0);
+  pageSize = $state(50);
+
   /** True when the browser reports no connection, or a write failed on the network (3d). */
   offline = $state(typeof navigator !== "undefined" ? !navigator.onLine : false);
   /** Set while the queue is parked on a rate limit; epoch ms (task 2d). */
@@ -117,6 +124,22 @@ export class AppStore {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
         return a.id < b.id ? 1 : -1;
       });
+  }
+
+  /** The current page of `visible`. */
+  get pageItems(): Bookmark[] {
+    const start = this.page * this.pageSize;
+    return this.visible.slice(start, start + this.pageSize);
+  }
+
+  get pageCount(): number {
+    return Math.max(1, Math.ceil(this.visible.length / this.pageSize));
+  }
+
+  /** Clamp the page after a filter change shrinks the result set. */
+  clampPage(): void {
+    if (this.page >= this.pageCount) this.page = this.pageCount - 1;
+    if (this.page < 0) this.page = 0;
   }
 
   /** Every tag in use, with its descendant-inclusive count (§3.3.2). */

@@ -106,6 +106,14 @@
     app runs entirely in your browser — nothing is sent anywhere else.
   </p>
 
+  <!-- Task 7e: stated before anything is saved, not buried in settings afterwards. -->
+  <p class="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2 text-sm text-[var(--color-ink-soft)]">
+    <strong>Worth knowing first:</strong> because storage is a git repository, deleting a
+    bookmark later removes it from the current file but <strong>not from the repository's
+    history</strong>. Every URL you save stays recoverable from past commits unless you rewrite
+    that history.
+  </p>
+
   <ol class="mt-8 space-y-6">
     <li>
       <h2 class="font-medium">1 · Create a private repository</h2>

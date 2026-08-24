@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 242 passing across 17 files |
+| Tests | 267 passing across 19 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
@@ -718,22 +718,22 @@ and the `scripts/` directory across. The app repo keeps them only as the canonic
 * [x] **6c.** Weekly scheduled link checker, reporting to the job summary. Deliberately
   read-only — a 404 today may be an outage, a rate limit, or a bot wall, and deleting a
   bookmark on that evidence is worse than leaving a dead link.
-* [ ] **6d.** Optional archival: submit new URLs to the Wayback Machine.
+* [x] **6d.** Optional archival: submit new URLs to the Wayback Machine.
 * [x] **6e.** Sanitise scraped metadata inside the Action — strip control characters, cap
   lengths — and re-validate on load. Our own workflow's output is not trusted (§5.4).
 
 ## 14. Phase 7 — UX Polish
 
-* [ ] **7a.** Command palette (`Cmd/Ctrl-K`) — add, search, filter, jump, all keyboard.
-* [ ] **7b.** Theme system: light, dark, and **e-ink** — the full §1.2 specification:
+* [x] **7a.** Command palette (`Cmd/Ctrl-K`) — add, search, filter, jump, all keyboard.
+* [x] **7b.** Theme system: light, dark, and **e-ink** — the full §1.2 specification:
   pure black on white, no greys, no colour-only signalling, no animation, static loading
   text in place of spinners, no hover-only affordances, large hit targets.
-* [ ] **7c.** Pagination with keyboard and tap navigation — **not** virtual scrolling.
+* [x] **7c.** Pagination with keyboard and tap navigation — **not** virtual scrolling.
   Under 500 bookmarks virtualisation buys nothing (§1.1), and pagination is additionally
   what e-ink wants in Phase 7.
-* [ ] **7d.** Accessibility: full keyboard navigation, focus management, ARIA, reduced-motion.
-* [ ] **7e.** Onboarding that states the git-history privacy caveat (§5.3) plainly.
-* [ ] **7f.** Settings: token storage mode (§5.5, showing which mode is active and why),
+* [x] **7d.** Accessibility: full keyboard navigation, focus management, ARIA, reduced-motion.
+* [x] **7e.** Onboarding that states the git-history privacy caveat (§5.3) plainly.
+* [x] **7f.** Settings: token storage mode (§5.5, showing which mode is active and why),
   foreground refresh interval (3k; off / 1 / 5 / 15 min), tombstone retention, storage
   persistence state (§6.3), theme.
 

@@ -4,7 +4,11 @@
 </script>
 
 {#if errorLog.entries.length > 0}
-  <div class="border-b-2 border-[var(--color-danger)] bg-[var(--color-surface-raised)]">
+  <div
+    class="border-b-2 border-[var(--color-danger)] bg-[var(--color-surface-raised)]"
+    role="alert"
+    aria-live="assertive"
+  >
     {#each errorLog.entries as entry (entry.id)}
       <div class="flex items-start gap-3 px-4 py-2 text-sm">
         <div class="min-w-0 flex-1">
