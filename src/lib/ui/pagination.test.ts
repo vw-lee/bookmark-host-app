@@ -69,3 +69,31 @@ describe("pagination", () => {
     expect(store.pageItems).toHaveLength(25);
   });
 });
+
+describe("clampPage — shrinking collections", () => {
+  it("pulls the user back when deletions empty the page they are on", async () => {
+    const store = await connected();
+    for (let i = 0; i < 60; i++) {
+      store.addBookmark({ url: `https://example.com/p${i}`, title: `Item ${i}` });
+    }
+    store.page = 1;
+    expect(store.pageItems).toHaveLength(10);
+
+    // Delete everything on the last page.
+    for (const b of [...store.pageItems]) store.deleteBookmark(b.id);
+    store.clampPage();
+
+    expect(store.page).toBe(0);
+    expect(store.pageItems.length).toBeGreaterThan(0);
+  });
+
+  it("is a no-op when the current page is still valid", async () => {
+    const store = await connected();
+    for (let i = 0; i < 120; i++) {
+      store.addBookmark({ url: `https://example.com/p${i}`, title: `Item ${i}` });
+    }
+    store.page = 1;
+    store.clampPage();
+    expect(store.page).toBe(1);
+  });
+});

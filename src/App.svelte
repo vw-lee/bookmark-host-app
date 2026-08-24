@@ -46,12 +46,19 @@
     theme.apply();
   });
 
-  // A filter change can shrink the list past the current page.
+  // A filter change means a different result set — start at the top of it.
   $effect(() => {
     void store.query;
     void store.selectedTag;
     void store.showArchived;
     store.page = 0;
+  });
+
+  // Deleting, archiving or merging can shrink the list while the user sits on a later page,
+  // which would otherwise leave them staring at an empty one with no obvious way back.
+  $effect(() => {
+    void store.visible.length;
+    store.clampPage();
   });
 
   $effect(() => {

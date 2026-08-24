@@ -571,16 +571,30 @@ been saved, when the value is obvious.
 ---
 ## 6.5 Build Status
 
-The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, and build.
+**All eight phases are implemented.** `npm run verify` runs lint, typecheck, tests, and build.
 
 | Area | State |
 |------|-------|
-| Tests | 267 passing across 19 files |
-| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
-| Bundle | ~128 KB raw / ~39 KB gzipped |
+| Tests | 269 passing across 20 files |
+| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, palette ranking, offline/rate-limit/refresh/pagination |
+| Bundle | ~190 KB raw / ~56 KB gzipped |
+| Source | ~8,800 lines; largest file 789 (limit 2,000) |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
 
 Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before committing.
+
+### What is NOT verified
+
+Honest limits, so nothing here reads as a stronger claim than it is:
+
+* **5e — real devices.** Android share intents and Background Sync wake-ups are unit-tested but
+  have never run on hardware. This is the one task that cannot be closed from a terminal.
+* **E-ink rendering.** Built to the §1.2 specification and verified in CSS; never seen on a
+  panel.
+* **Deployment.** The Pages workflow is written and the build is verified locally, but Pages
+  has not been enabled and nothing has been pushed.
+* **The Phase 6 workflows** run correctly against live sites locally; they have not run inside
+  GitHub Actions, and they still need copying into the data repository.
 
 ---
 
@@ -663,7 +677,7 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 
 ## 11. Phase 4 — Scale & Portability
 
-* [ ] ~~**4a.** Migrate writes to the Git Data API.~~ **Deferred indefinitely** (D5) — the
+* ~~**4a.** Migrate writes to the Git Data API.~~ **Deferred indefinitely** (D5) — the
   Contents API is sufficient under 500 bookmarks. Reinstate only if 3g fires.
 * [x] **4b.** Import: Netscape bookmarks HTML (every browser exports this format).
 * [x] **4c.** Import: Raindrop / Pocket / Pinboard JSON + generic CSV.
