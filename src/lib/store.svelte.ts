@@ -7,7 +7,16 @@
  */
 import { GitHubClient, NOT_MODIFIED } from "./api/github";
 import { GitHubError } from "./api/errors";
-import { loadConnection, saveConnection, clearToken, type Connection } from "./api/tokenStore";
+import {
+  loadConnection,
+  saveConnection,
+  saveWrappedConnection,
+  unlockConnection,
+  hasWrappedToken,
+  clearToken,
+  type Connection,
+  type StorageMode,
+} from "./api/tokenStore";
 import { parseBookmarkFile } from "./schema/schema";
 import { migrate, needsMigration } from "./schema/migrate";
 import { serialize } from "./schema/serialize";
@@ -67,6 +76,8 @@ export class AppStore {
   booting = $state(true);
   /** Set when the user explicitly asks to (re)connect, overriding the cached-data case. */
   wantsSetup = $state(false);
+  /** A PIN-wrapped token is stored and waiting to be unlocked (D13). */
+  locked = $state(false);
 
   private client: GitHubClient | null = null;
   private sha: string | null = null;
@@ -138,6 +149,8 @@ export class AppStore {
    */
   get needsSetup(): boolean {
     if (this.wantsSetup) return true;
+    // A locked token means setup is already done; the unlock screen owns the flow instead.
+    if (this.locked) return false;
     return !this.connected && liveBookmarks(this.file).length === 0;
   }
 
@@ -169,6 +182,12 @@ export class AppStore {
       this.pendingCount = mirror.pending;
       this.size = measureSize(serialize(mirror.file));
       if (mirror.dirty) this.status = "ready";
+    }
+
+    if (hasWrappedToken()) {
+      this.locked = true;
+      this.status = mirror ? "ready" : "disconnected";
+      return;
     }
 
     const connection = loadConnection();
@@ -290,9 +309,26 @@ export class AppStore {
    * Connect, probe, and load. `mode` null means "already saved, do not re-persist".
    * Task 1a/1c/1d: probe, read, and bootstrap the file if it does not exist.
    */
+  /**
+   * Unlock a PIN-wrapped token and connect with it (D13).
+   * Returns false for a wrong passphrase, without disturbing any state.
+   */
+  async unlock(pin: string): Promise<boolean> {
+    const connection = await unlockConnection(pin);
+    if (!connection) return false;
+    this.locked = false;
+    await this.connect(connection, null);
+    return true;
+  }
+
+  /** Wrap and store the current connection under a passphrase. */
+  async setPin(connection: Connection, pin: string): Promise<void> {
+    await saveWrappedConnection(connection, pin);
+  }
+
   async connect(
     connection: Connection,
-    mode: "session" | "local" | null,
+    mode: StorageMode | null,
     /** Injected only by tests, so the store can be driven against a scripted API. */
     fetchImpl?: typeof fetch,
   ): Promise<void> {
@@ -309,7 +345,9 @@ export class AppStore {
       await client.probe();
       this.client = client;
       this.wantsSetup = false;
-      if (mode) saveConnection(connection, mode);
+      this.locked = false;
+      // "pin" is persisted by setPin(), which needs the passphrase this method does not have.
+      if (mode && mode !== "pin") saveConnection(connection, mode);
       await this.load();
     } catch (e) {
       this.client = null;
@@ -666,6 +704,7 @@ export class AppStore {
     this.status = "disconnected";
     this.error = null;
     this.wantsSetup = true;
+    this.locked = false;
     this.dirty = false;
     this.pendingCount = 0;
     for (const off of this.teardown) off();

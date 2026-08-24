@@ -97,7 +97,7 @@ before the phase that depends on them begins.
 | D10 | Custom domain | **RESOLVED — no. Hosting on `username.github.io`** | Accepted consequence: the §5.1 shared-origin exposure is permanent, and D8 takes its constrained form. A dedicated GitHub account for hosting remains the cheapest way to shrink it. |
 | D11 | Encryption at rest | **OPEN — default NO** | Zero-knowledge encryption would kill readable diffs and rule out Actions-based enrichment (§9). |
 | D12 | Taxonomy | **Tags only, `/`-delimited, lowercase canonical, descendant-inclusive filtering** | Folders and tags were two overlapping taxonomies. Derived tree nodes make an inconsistent hierarchy unrepresentable (§3.3). |
-| D13 | Token at rest | **OPEN — PIN-wrapped `localStorage` proposed** | Would replace re-pasting a 93-character PAT with a short PIN while keeping sibling pages on the shared origin locked out. Needs sign-off before Phase 1b. |
+| D13 | Token at rest | **BUILT — PIN-wrapped `localStorage`, now the default mode** | PBKDF2 (600k) → AES-GCM. Converts "a sibling page can take your token" into "an attacker must target this app specifically, then do work". Does **not** defend against XSS in this app after unlock, nor against offline grinding of a short passphrase — see `tokenCrypto.ts` for the exact claim. |
 | D14 | E-ink support | **Deferred to Phase 7 polish, after the MVP** | User decision. Two zero-cost habits during the MVP keep the deferral cheap: colour behind design tokens, and no animation built that would only be removed (§1.2). |
 | D15 | Outbox shape | **Whole-document mirror plus a dirty flag, not a replayable op log** | The LWW+tombstone model (D6) already reconciles two documents without knowing which edits produced them. An op log would be more machinery for the same result, plus a new failure mode: a log that has drifted from the document it describes. |
 
@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 188 passing across 13 files |
+| Tests | 202 passing across 14 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |

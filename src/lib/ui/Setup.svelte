@@ -9,6 +9,7 @@
    */
   import { store } from "../store.svelte";
   import { loadTarget, type StorageMode } from "../api/tokenStore";
+  import { MIN_PIN_LENGTH, cryptoAvailable } from "../api/tokenCrypto";
   import { GitHubError } from "../api/errors";
   import { errorLog } from "./errorLog.svelte";
 
@@ -18,7 +19,8 @@
   let repo = $state(saved?.repo ?? "");
   let path = $state(saved?.path ?? "data/bookmarks.json");
   let token = $state("");
-  let mode = $state<StorageMode>("session");
+  let mode = $state<StorageMode>(cryptoAvailable() ? "pin" : "session");
+  let pin = $state("");
   let busy = $state(false);
   let message = $state<string | null>(null);
   let detail = $state<string | null>(null);
@@ -65,9 +67,19 @@
       return;
     }
 
+    if (mode === "pin" && pin.length < MIN_PIN_LENGTH) {
+      message = `Use a passphrase of at least ${MIN_PIN_LENGTH} characters.`;
+      busy = false;
+      step = null;
+      return;
+    }
+
     try {
       await store.connect(trimmed, mode);
+      // Only wrapped once the token is known to work — storing a bad one helps nobody.
+      if (mode === "pin") await store.setPin(trimmed, pin);
       token = "";
+      pin = "";
       step = null;
     } catch (e) {
       if (e instanceof GitHubError) {
@@ -172,10 +184,42 @@
 
         <fieldset class="rounded border border-[var(--color-border)] p-3 text-sm">
           <legend class="px-1 text-[var(--color-ink-soft)]">Keep me signed in</legend>
+
+          {#if cryptoAvailable()}
+            <label class="flex items-start gap-2">
+              <input type="radio" bind:group={mode} value="pin" class="mt-1" />
+              <span>
+                <strong>Protect with a passphrase</strong> — recommended.
+                <span class="block text-[var(--color-ink-soft)]">
+                  The token is encrypted on this device and unlocked with a passphrase, so you
+                  never re-paste it. Another page on this shared github.io address would find
+                  only ciphertext it cannot open.
+                </span>
+              </span>
+            </label>
+
+            {#if mode === "pin"}
+              <label class="mt-2 block pl-6 text-sm">
+                <span class="text-[var(--color-ink-soft)]"
+                  >Passphrase (at least {MIN_PIN_LENGTH} characters — length matters far more
+                  than symbols)</span
+                >
+                <input
+                  bind:value={pin}
+                  type="password"
+                  class="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2"
+                  autocomplete="new-password"
+                />
+              </label>
+            {/if}
+
+            <hr class="my-3 border-[var(--color-border)]" />
+          {/if}
+
           <label class="flex items-start gap-2">
             <input type="radio" bind:group={mode} value="session" class="mt-1" />
             <span>
-              <strong>This tab only</strong> — recommended.
+              <strong>This tab only</strong>
               <span class="block text-[var(--color-ink-soft)]"
                 >The token is forgotten when the tab closes.</span
               >

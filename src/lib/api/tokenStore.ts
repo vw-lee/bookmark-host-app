@@ -9,13 +9,21 @@
  * re-pasting a 93-character PAT after every cold launch, which nobody does. The warning text
  * lives with the UI that offers the choice, not here.
  *
- * D13 (PIN-wrapping the token via WebCrypto) is still open and would sit behind this same
- * interface without changing callers.
+ * D13 adds a third mode: the token wrapped under a passphrase via WebCrypto, which is the only
+ * mode that survives a cold launch without leaving a usable secret on a shared origin. See
+ * tokenCrypto.ts for exactly what that does and does not defend against.
  */
 
-export type StorageMode = "session" | "local";
+import { wrapToken, unwrapToken, isWrappedToken, type WrappedToken } from "./tokenCrypto";
+
+/**
+ * "pin" wraps the token with a passphrase before storing it in localStorage (D13). It is the
+ * only mode that survives a cold launch without leaving a usable secret on a shared origin.
+ */
+export type StorageMode = "session" | "local" | "pin";
 
 const TOKEN_KEY = "bm.token";
+const WRAPPED_KEY = "bm.token.enc";
 const TARGET_KEY = "bm.target";
 const MODE_KEY = "bm.mode";
 
@@ -65,13 +73,59 @@ function stores(): { session: Storage | undefined; local: Storage | undefined } 
 
 export function getStorageMode(): StorageMode {
   const { local } = stores();
-  return safeGet(local, MODE_KEY) === "local" ? "local" : "session";
+  const stored = safeGet(local, MODE_KEY);
+  return stored === "local" || stored === "pin" ? stored : "session";
+}
+
+/** Is there a PIN-wrapped token waiting to be unlocked? */
+export function hasWrappedToken(): boolean {
+  return loadWrapped() !== null;
+}
+
+function loadWrapped(): WrappedToken | null {
+  const { local } = stores();
+  const raw = safeGet(local, WRAPPED_KEY);
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isWrappedToken(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Unlock a stored token. Returns null for a wrong passphrase. */
+export async function unlockConnection(pin: string): Promise<Connection | null> {
+  const wrapped = loadWrapped();
+  const target = loadTarget();
+  if (!wrapped || !target) return null;
+
+  const token = await unwrapToken(wrapped, pin);
+  return token ? { token, ...target } : null;
+}
+
+/** Store the token wrapped under a passphrase (D13). */
+export async function saveWrappedConnection(
+  connection: Connection,
+  pin: string,
+): Promise<boolean> {
+  const { local } = stores();
+  const { token, ...target } = connection;
+  const wrapped = await wrapToken(token, pin);
+
+  clearToken();
+  const ok = safeSet(local, WRAPPED_KEY, JSON.stringify(wrapped));
+  safeSet(local, TARGET_KEY, JSON.stringify(target));
+  safeSet(local, MODE_KEY, "pin");
+  return ok;
 }
 
 /** Load the saved connection, checking both stores so a mode change never orphans a token. */
 export function loadConnection(): Connection | null {
   const { session, local } = stores();
   const mode = getStorageMode();
+  // A PIN-wrapped token is never returned here — it requires unlockConnection().
+  if (mode === "pin") return null;
   const primary = mode === "local" ? local : session;
 
   const token = safeGet(primary, TOKEN_KEY) ?? safeGet(session, TOKEN_KEY);
@@ -89,6 +143,9 @@ export function loadConnection(): Connection | null {
 
 /** Persist a connection. Returns false if storage is unavailable, so the UI can say so. */
 export function saveConnection(connection: Connection, mode: StorageMode): boolean {
+  if (mode === "pin") {
+    throw new Error("Use saveWrappedConnection() for PIN mode — it needs the passphrase.");
+  }
   const { session, local } = stores();
   const { token, ...target } = connection;
 
@@ -104,11 +161,12 @@ export function saveConnection(connection: Connection, mode: StorageMode): boole
   return ok;
 }
 
-/** Remove the token from both stores, leaving the non-secret target in place. */
+/** Remove the token from every store, leaving the non-secret target in place. */
 export function clearToken(): void {
   const { session, local } = stores();
   safeRemove(session, TOKEN_KEY);
   safeRemove(local, TOKEN_KEY);
+  safeRemove(local, WRAPPED_KEY);
 }
 
 /** Full disconnect — token and target. */

@@ -25,18 +25,32 @@ async function render(): Promise<HTMLElement> {
   return target;
 }
 
-function fill(target: HTMLElement) {
-  const set = (selector: string, value: string) => {
-    const input = target.querySelector(selector) as HTMLInputElement;
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  };
-  const inputs = Array.from(target.querySelectorAll("input")) as HTMLInputElement[];
-  inputs[0]!.value = "victor";
-  inputs[0]!.dispatchEvent(new Event("input", { bubbles: true }));
-  inputs[1]!.value = "bookmarks";
-  inputs[1]!.dispatchEvent(new Event("input", { bubbles: true }));
-  set('input[type="password"]', "ghp_bad");
+/**
+ * Fill the form. `mode` selects the storage radio — PIN is the default now (D13), and it
+ * refuses to submit without a passphrase, so tests of the connection path pick "session".
+ */
+function fill(target: HTMLElement, mode: "session" | "pin" = "session", pin = "") {
+  const radio = target.querySelector(`input[type="radio"][value="${mode}"]`) as HTMLInputElement;
+  radio.click();
+  flushSync();
+
+  const text = Array.from(
+    target.querySelectorAll('input:not([type="radio"]):not([type="password"])'),
+  ) as HTMLInputElement[];
+  text[0]!.value = "victor";
+  text[0]!.dispatchEvent(new Event("input", { bubbles: true }));
+  text[1]!.value = "bookmarks";
+  text[1]!.dispatchEvent(new Event("input", { bubbles: true }));
+
+  const passwords = Array.from(
+    target.querySelectorAll('input[type="password"]'),
+  ) as HTMLInputElement[];
+  passwords[0]!.value = "ghp_bad";
+  passwords[0]!.dispatchEvent(new Event("input", { bubbles: true }));
+  if (mode === "pin" && passwords[1]) {
+    passwords[1]!.value = pin;
+    passwords[1]!.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   flushSync();
 }
 
@@ -89,9 +103,11 @@ describe("Setup — failed connection", () => {
     fill(target);
     await submit(target);
 
-    const inputs = Array.from(target.querySelectorAll("input")) as HTMLInputElement[];
-    expect(inputs[0]!.value).toBe("victor");
-    expect(inputs[1]!.value).toBe("bookmarks");
+    const text = Array.from(
+      target.querySelectorAll('input:not([type="radio"]):not([type="password"])'),
+    ) as HTMLInputElement[];
+    expect(text[0]!.value).toBe("victor");
+    expect(text[1]!.value).toBe("bookmarks");
   });
 
   it("reports a repository that cannot be reached", async () => {
@@ -147,5 +163,54 @@ describe("Setup — successful connection", () => {
 
     expect(target.querySelector('input[type="password"]')).toBeNull();
     expect(target.textContent).toContain("No bookmarks yet");
+  });
+});
+
+describe("Setup — PIN mode (D13)", () => {
+  it("refuses to submit without a long enough passphrase", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        seen.push(String(url));
+        return new Response(JSON.stringify({ name: "bookmarks" }), { status: 200 });
+      }),
+    );
+
+    const target = await render();
+    fill(target, "pin", "12345");
+    await submit(target);
+
+    // Rejected locally — no request should have been made at all.
+    expect(seen).toHaveLength(0);
+    expect(target.textContent).toContain("at least 6 characters");
+  });
+
+  it("stores the token wrapped, never in the clear", async () => {
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        call += 1;
+        if (call === 2) return new Response(JSON.stringify({}), { status: 404 });
+        if (call >= 3)
+          return new Response(JSON.stringify({ content: { sha: "s" } }), { status: 200 });
+        return new Response(JSON.stringify({ name: "bookmarks" }), { status: 200 });
+      }),
+    );
+
+    const target = await render();
+    fill(target, "pin", "correct-horse-battery");
+    await submit(target);
+    // PBKDF2 at 600k iterations is deliberately slow; poll rather than guess a delay.
+    for (let i = 0; i < 100 && localStorage.getItem("bm.token.enc") === null; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    flushSync();
+
+    const dump = JSON.stringify(localStorage);
+    expect(dump).not.toContain("ghp_bad");
+    expect(localStorage.getItem("bm.token.enc")).not.toBeNull();
+    expect(localStorage.getItem("bm.token")).toBeNull();
   });
 });

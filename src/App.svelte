@@ -9,6 +9,7 @@
   import { GitHubError } from "./lib/api/errors";
   import { clearConnection } from "./lib/api/tokenStore";
   import Setup from "./lib/ui/Setup.svelte";
+  import Unlock from "./lib/ui/Unlock.svelte";
   import BookmarkRow from "./lib/ui/BookmarkRow.svelte";
   import TagTree from "./lib/ui/TagTree.svelte";
   import QuickAdd from "./lib/ui/QuickAdd.svelte";
@@ -98,6 +99,8 @@
 
 {#if store.booting}
   <p class="p-8 text-sm text-[var(--color-ink-soft)]">Starting…</p>
+{:else if store.locked}
+  <Unlock />
 {:else if store.needsSetup}
   <Setup />
 {:else}
