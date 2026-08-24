@@ -8,6 +8,16 @@
    */
   import { store } from "../store.svelte";
   import { parseNetscape, planImport, toNetscape, type MergePlan } from "../io/netscape";
+  import {
+    detectFormat,
+    parseRaindrop,
+    parsePocket,
+    parsePinboard,
+    parseGenericJson,
+    parseCsv,
+    UnknownFormatError,
+    type SourceFormat,
+  } from "../io/formats";
   import { serialize } from "../schema/serialize";
   import { liveBookmarks } from "../sync/merge";
 
@@ -18,6 +28,16 @@
 
   let plan = $state<MergePlan | null>(null);
   let filename = $state("");
+  let format = $state<SourceFormat | null>(null);
+
+  const FORMAT_NAMES: Record<SourceFormat, string> = {
+    netscape: "browser bookmarks",
+    raindrop: "Raindrop",
+    pocket: "Pocket",
+    pinboard: "Pinboard",
+    csv: "CSV",
+    json: "JSON",
+  };
   let problem = $state<string | null>(null);
   let applied = $state<{ added: number; updated: number } | null>(null);
 
@@ -30,13 +50,32 @@
     filename = file.name;
     try {
       const text = await file.text();
-      plan = planImport(parseNetscape(text), store.file.bookmarks);
+      // Detected from content, not filename — exports get renamed (task 4c).
+      format = detectFormat(text);
+      if (!format) throw new UnknownFormatError();
+
+      const report =
+        format === "netscape"
+          ? parseNetscape(text)
+          : format === "raindrop"
+            ? parseRaindrop(text)
+            : format === "pocket"
+              ? parsePocket(text)
+              : format === "pinboard"
+                ? parsePinboard(text)
+                : format === "csv"
+                  ? parseCsv(text)
+                  : parseGenericJson(text);
+
+      plan = planImport(report, store.file.bookmarks);
       if (plan.additions.length === 0 && plan.updates.length === 0) {
         problem = "No importable bookmarks were found in that file.";
       }
-    } catch {
-      problem = "That file could not be read.";
+    } catch (e) {
+      problem =
+        e instanceof UnknownFormatError ? e.message : "That file could not be read.";
       plan = null;
+      format = null;
     }
   }
 
@@ -84,12 +123,13 @@
     <section class="mt-5">
       <h3 class="text-sm font-medium">Import from a browser</h3>
       <p class="mt-1 text-sm text-[var(--color-ink-soft)]">
-        Export your bookmarks from Chrome, Firefox, Safari, or Edge as HTML, then choose the file
-        here. Nothing changes until you confirm.
+        Accepts browser bookmarks HTML (Chrome, Firefox, Safari, Edge), plus Raindrop, Pocket,
+        and Pinboard exports and any CSV with a <code>url</code> column. The format is detected
+        from the file itself. Nothing changes until you confirm.
       </p>
       <input
         type="file"
-        accept=".html,.htm,text/html"
+        accept=".html,.htm,.json,.csv,text/html,application/json,text/csv"
         class="mt-2 w-full text-sm"
         onchange={onFile}
       />
@@ -108,7 +148,12 @@
 
       {#if plan}
         <div class="mt-3 rounded border border-[var(--color-border)] p-3 text-sm">
-          <p class="font-medium">{filename}</p>
+          <p class="font-medium">
+            {filename}
+            {#if format}
+              <span class="text-[var(--color-ink-soft)]">· {FORMAT_NAMES[format]}</span>
+            {/if}
+          </p>
 
           <ul class="mt-2 space-y-1 text-[var(--color-ink-soft)]">
             <li>{plan.additions.length} new bookmark{plan.additions.length === 1 ? "" : "s"}</li>

@@ -25,6 +25,13 @@ import { normalizeTags, normalizeUrlKey, cleanText, tagMatches } from "./schema/
 import { ulid } from "./schema/ulid";
 import { merge, liveBookmarks } from "./sync/merge";
 import { toBookmarks, type MergePlan } from "./io/netscape";
+import {
+  findDuplicates,
+  applyDedupe,
+  applyRename,
+  applyDeleteTag,
+  type DuplicateGroup,
+} from "./io/bulk";
 import { saveMirror, loadMirror, clearMirror, type MirrorState } from "./sync/db";
 import { withWriteLock, announce, onTabMessage } from "./sync/tabs";
 import {
@@ -556,6 +563,47 @@ export class AppStore {
     };
     this.scheduleFlush();
     return { added: additions.length, updated: plan.updates.length };
+  }
+
+  // -------------------------------------------------------------- bulk edits
+
+  /** Live duplicate groups sharing a urlKey (task 4e). */
+  get duplicates(): DuplicateGroup[] {
+    return findDuplicates(this.file.bookmarks);
+  }
+
+  /** Merge the given duplicate groups. Returns how many records were tombstoned. */
+  mergeDuplicates(groups: DuplicateGroup[]): number {
+    if (groups.length === 0) return 0;
+    const now = new Date().toISOString();
+    this.file = {
+      ...this.file,
+      updatedAt: now,
+      bookmarks: applyDedupe(this.file.bookmarks, groups, now),
+    };
+    this.scheduleFlush();
+    return groups.reduce((total, g) => total + g.merge.length, 0);
+  }
+
+  /** Rename a tag and its whole subtree (task 4f). */
+  renameTag(from: string, to: string): void {
+    const now = new Date().toISOString();
+    const bookmarks = applyRename(this.file.bookmarks, from, to, now);
+    if (bookmarks === this.file.bookmarks) return;
+    this.file = { ...this.file, updatedAt: now, bookmarks };
+    // A selected tag that no longer exists would silently show an empty list.
+    if (this.selectedTag && this.selectedTag.startsWith(from)) this.selectedTag = null;
+    this.scheduleFlush();
+  }
+
+  /** Remove a tag and its descendants from every record. Bookmarks are never deleted. */
+  deleteTag(tag: string): void {
+    const now = new Date().toISOString();
+    const bookmarks = applyDeleteTag(this.file.bookmarks, tag, now);
+    if (bookmarks === this.file.bookmarks) return;
+    this.file = { ...this.file, updatedAt: now, bookmarks };
+    if (this.selectedTag && this.selectedTag.startsWith(tag)) this.selectedTag = null;
+    this.scheduleFlush();
   }
 
   // ------------------------------------------------------------------- writes

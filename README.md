@@ -575,7 +575,7 @@ The MVP is implemented and green. `npm run verify` runs lint, typecheck, tests, 
 
 | Area | State |
 |------|-------|
-| Tests | 202 passing across 14 files |
+| Tests | 242 passing across 17 files |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, store integration, offline/rate-limit/refresh/size/locking |
 | Bundle | ~128 KB raw / ~39 KB gzipped |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
@@ -666,10 +666,10 @@ Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before 
 * [ ] ~~**4a.** Migrate writes to the Git Data API.~~ **Deferred indefinitely** (D5) — the
   Contents API is sufficient under 500 bookmarks. Reinstate only if 3g fires.
 * [x] **4b.** Import: Netscape bookmarks HTML (every browser exports this format).
-* [ ] **4c.** Import: Raindrop / Pocket / Pinboard JSON + generic CSV.
+* [x] **4c.** Import: Raindrop / Pocket / Pinboard JSON + generic CSV.
 * [x] **4d.** Export: Netscape HTML and raw JSON. No lock-in, by design.
-* [ ] **4e.** Bulk dedupe pass over `urlKey` with a review-before-apply UI.
-* [ ] **4f.** Bulk tag operations — rename, merge, delete across the whole collection.
+* [x] **4e.** Bulk dedupe pass over `urlKey` with a review-before-apply UI.
+* [x] **4f.** Bulk tag operations — rename, merge, delete across the whole collection.
   Renaming a subtree is a prefix replace over every matching tag string; re-normalise the
   result and merge into any tag it now collides with.
 * [x] **4h.** Map source folder paths to tag paths through the §3.3.3 normaliser, and show

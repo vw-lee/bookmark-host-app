@@ -16,6 +16,7 @@
   import StatusBar from "./lib/ui/StatusBar.svelte";
   import Settings from "./lib/ui/Settings.svelte";
   import ImportExport from "./lib/ui/ImportExport.svelte";
+  import BulkTools from "./lib/ui/BulkTools.svelte";
   import InstallPrompt from "./lib/ui/InstallPrompt.svelte";
   import ErrorBanner from "./lib/ui/ErrorBanner.svelte";
   import {
@@ -30,6 +31,7 @@
   let adding = $state(false);
   let settingsOpen = $state(false);
   let ioOpen = $state(false);
+  let bulkOpen = $state(false);
   let installAvailable = $state(false);
   let installDismissed = $state(false);
   let sharedNotice = $state<string | null>(null);
@@ -149,6 +151,12 @@
       </button>
       <button
         class="text-xs text-[var(--color-ink-soft)] underline"
+        onclick={() => (bulkOpen = true)}
+      >
+        Tools
+      </button>
+      <button
+        class="text-xs text-[var(--color-ink-soft)] underline"
         onclick={() => (settingsOpen = true)}
       >
         Settings
@@ -232,4 +240,8 @@
 
 {#if ioOpen}
   <ImportExport onClose={() => (ioOpen = false)} />
+{/if}
+
+{#if bulkOpen}
+  <BulkTools onClose={() => (bulkOpen = false)} />
 {/if}
