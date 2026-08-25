@@ -6,7 +6,13 @@
    * granted — a denied grant must be visible rather than silently risking the queue (§6.3).
    */
   import { store, REFRESH_INTERVALS } from "../store.svelte";
-  import { getStorageMode } from "../api/tokenStore";
+  import {
+    getStorageMode,
+    getRememberUnlock,
+    setRememberUnlock,
+    hasWrappedToken,
+    clearConnection,
+  } from "../api/tokenStore";
   import { formatBytes } from "../sync/persistence";
   import { theme, type Theme } from "./theme.svelte";
 
@@ -16,7 +22,27 @@
   const { onClose }: Props = $props();
 
   const mode = getStorageMode();
+  const wrapped = hasWrappedToken();
   const onGithubIo = typeof location !== "undefined" && location.hostname.endsWith("github.io");
+
+  let stayUnlocked = $state(getRememberUnlock());
+  let confirmingDisconnect = $state(false);
+
+  function toggleStayUnlocked() {
+    stayUnlocked = !stayUnlocked;
+    setRememberUnlock(stayUnlocked);
+  }
+
+  function lockNow() {
+    store.lock();
+    onClose();
+  }
+
+  function disconnect() {
+    clearConnection();
+    store.disconnect();
+    onClose();
+  }
 
   const labels: Record<number, string> = {
     0: "Off",
@@ -85,16 +111,47 @@
     <section class="mt-5">
       <h3 class="text-sm font-medium">Token storage</h3>
       <p class="mt-1 text-sm text-[var(--color-ink-soft)]">
-        {#if mode === "session"}
-          <strong>This tab only.</strong> The token is forgotten when the tab closes.
+        {#if mode === "pin"}
+          <strong>Encrypted with your passphrase.</strong> Setup does not need repeating — the
+          token stays on this device until it expires or you disconnect below.
+        {:else if mode === "session"}
+          <strong>This tab only.</strong> The token is forgotten when the tab closes, so it has
+          to be pasted again next time.
         {:else}
           <strong>Remembered on this device.</strong>
         {/if}
-        {#if onGithubIo}
+        {#if onGithubIo && mode !== "pin"}
           This app is served from a github.io address, which shares its storage with every other
           project on that account — so any of them could read a remembered token.
         {/if}
       </p>
+
+      {#if wrapped}
+        <label class="mt-3 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={stayUnlocked}
+            onchange={toggleStayUnlocked}
+            class="mt-1"
+          />
+          <span>
+            Stay unlocked in this tab
+            <span class="block text-[var(--color-ink-soft)]">
+              On, a reload or a tab the browser put to sleep comes back without asking for the
+              passphrase; the unlocked token is dropped when the tab closes. Off, every reload
+              asks again.
+            </span>
+          </span>
+        </label>
+
+        <button
+          class="mt-3 rounded border border-[var(--color-border)] px-3 py-1.5 text-sm"
+          onclick={lockNow}
+          disabled={!store.connected}
+        >
+          Lock now
+        </button>
+      {/if}
     </section>
 
     <section class="mt-5">
@@ -185,6 +242,35 @@
           <dd>{store.lastSyncedAt ? new Date(store.lastSyncedAt).toLocaleTimeString() : "never"}</dd>
         </div>
       </dl>
+    </section>
+
+    <!--
+      Moved here from the header (D16). It deletes the token AND the repository settings, so
+      the next launch is the full first-run wall again — too expensive to sit one stray click
+      away from the Settings button.
+    -->
+    <section class="mt-5 border-t border-[var(--color-border)] pt-5">
+      <h3 class="text-sm font-medium">Disconnect</h3>
+      <p class="mt-1 text-sm text-[var(--color-ink-soft)]">
+        Deletes the stored token and the repository settings from this device, and clears the
+        offline copy. Your bookmarks on GitHub are untouched, but connecting again means a new
+        access token and the full setup.
+      </p>
+      {#if confirmingDisconnect}
+        <div class="mt-2 flex gap-3 text-sm">
+          <button class="text-[var(--color-danger)] underline" onclick={disconnect}>
+            Yes, disconnect
+          </button>
+          <button class="underline" onclick={() => (confirmingDisconnect = false)}>Cancel</button>
+        </div>
+      {:else}
+        <button
+          class="mt-2 rounded border border-[var(--color-border)] px-3 py-1.5 text-sm"
+          onclick={() => (confirmingDisconnect = true)}
+        >
+          Disconnect
+        </button>
+      {/if}
     </section>
   </div>
 </div>

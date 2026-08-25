@@ -214,3 +214,62 @@ describe("Setup — PIN mode (D13)", () => {
     expect(localStorage.getItem("bm.token")).toBeNull();
   });
 });
+
+describe("Setup — reconnect rather than re-setup (D16)", () => {
+  it("skips the first-run wall when the repository is already known", async () => {
+    // The state left behind by a session-mode token that died with the tab: the repo is
+    // configured, only the token is missing.
+    localStorage.setItem(
+      "bm.target",
+      JSON.stringify({ owner: "victor", repo: "bookmarks", path: "data/bookmarks.json" }),
+    );
+
+    const target = await render();
+    const text = target.textContent ?? "";
+
+    // The three-step instructions are collapsed away — this is one token, not a setup.
+    expect(text).not.toContain("Create a private repository");
+    expect(text).toContain("Reconnect");
+    // Everything the user already entered is still there.
+    const fields = Array.from(
+      target.querySelectorAll('input:not([type="radio"]):not([type="password"])'),
+    ) as HTMLInputElement[];
+    expect(fields[0]!.value).toBe("victor");
+    expect(fields[1]!.value).toBe("bookmarks");
+    expect(fields[2]!.value).toBe("data/bookmarks.json");
+  });
+
+  it("says plainly when the token is the thing that expired", async () => {
+    localStorage.setItem(
+      "bm.target",
+      JSON.stringify({ owner: "victor", repo: "bookmarks", path: "data/bookmarks.json" }),
+    );
+    localStorage.setItem("bm.token.expired", "1");
+
+    const target = await render();
+    // restore() is what reads the expiry flag, and it settles a tick after mount.
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+    const text = target.textContent ?? "";
+    expect(text).toContain("expired");
+    // And it must reassure rather than imply data loss.
+    expect(text).toContain("safe on this device");
+  });
+
+  it("still offers a way back to a full setup", async () => {
+    localStorage.setItem(
+      "bm.target",
+      JSON.stringify({ owner: "victor", repo: "bookmarks", path: "data/bookmarks.json" }),
+    );
+
+    const target = await render();
+    const startOver = Array.from(target.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("different repository"),
+    );
+    expect(startOver).toBeDefined();
+
+    startOver!.click();
+    flushSync();
+    expect(target.textContent).toContain("Create a private repository");
+  });
+});

@@ -12,6 +12,18 @@
  * D13 adds a third mode: the token wrapped under a passphrase via WebCrypto, which is the only
  * mode that survives a cold launch without leaving a usable secret on a shared origin. See
  * tokenCrypto.ts for exactly what that does and does not defend against.
+ *
+ * D16 makes that mode livable. Setup is a wall — three steps and a PAT form most people have
+ * never seen — so it must happen ONCE, not every time a long-lived page goes stale. Two pieces
+ * of state exist for that:
+ *
+ *   - the unlock cache: the decrypted token in sessionStorage, so a reload, or a tab the
+ *     browser discarded and later restored, comes back without asking for the passphrase
+ *     again. It dies with the browsing context — the same exposure "session" mode already
+ *     accepts — and it is per-tab, so a sibling page in another tab cannot read it at all.
+ *   - the expired flag: set when GitHub answers 401. The wrapped blob holds that same dead
+ *     token, so asking for a passphrase first would waste the user's time; the flag routes
+ *     the next launch straight to "paste a new token" instead.
  */
 
 import { wrapToken, unwrapToken, isWrappedToken, type WrappedToken } from "./tokenCrypto";
@@ -26,6 +38,10 @@ const TOKEN_KEY = "bm.token";
 const WRAPPED_KEY = "bm.token.enc";
 const TARGET_KEY = "bm.target";
 const MODE_KEY = "bm.mode";
+/** Set when GitHub rejected the stored token, so the next launch skips straight to reconnect. */
+const EXPIRED_KEY = "bm.token.expired";
+/** The user's answer to "stay unlocked in this tab", remembered across sessions. */
+const REMEMBER_KEY = "bm.unlock.remember";
 
 export interface Connection {
   token: string;
@@ -82,6 +98,16 @@ export function hasWrappedToken(): boolean {
   return loadWrapped() !== null;
 }
 
+/**
+ * Has setup already been completed on this device?
+ *
+ * A saved target plus a token in any form. This is the guard that keeps the first-run wall
+ * from reappearing: everything short of an explicit disconnect is a reconnect, not a setup.
+ */
+export function hasCompletedSetup(): boolean {
+  return loadTarget() !== null && (hasWrappedToken() || loadConnection() !== null);
+}
+
 function loadWrapped(): WrappedToken | null {
   const { local } = stores();
   const raw = safeGet(local, WRAPPED_KEY);
@@ -104,31 +130,68 @@ export async function unlockConnection(pin: string): Promise<Connection | null> 
   return token ? { token, ...target } : null;
 }
 
-/** Store the token wrapped under a passphrase (D13). */
-export async function saveWrappedConnection(
-  connection: Connection,
-  pin: string,
-): Promise<boolean> {
-  const { local } = stores();
-  const { token, ...target } = connection;
-  const wrapped = await wrapToken(token, pin);
+/**
+ * Keep the decrypted token for the rest of this browsing context (D16).
+ *
+ * This is what stops a reload — or a tab the OS discarded and then restored — from demanding
+ * the passphrase again. sessionStorage is scoped to the one tab and cleared when it closes.
+ */
+export function cacheUnlockedToken(token: string): void {
+  const { session } = stores();
+  safeSet(session, TOKEN_KEY, token);
+}
 
-  clearToken();
-  const ok = safeSet(local, WRAPPED_KEY, JSON.stringify(wrapped));
-  safeSet(local, TARGET_KEY, JSON.stringify(target));
-  safeSet(local, MODE_KEY, "pin");
-  return ok;
+/** Drop the unlocked copy, returning to "passphrase required" without touching the wrapped blob. */
+export function clearUnlockCache(): void {
+  const { session } = stores();
+  safeRemove(session, TOKEN_KEY);
+}
+
+/** Does the user want the unlock to persist for the tab? Defaults to yes. */
+export function getRememberUnlock(): boolean {
+  const { local } = stores();
+  return safeGet(local, REMEMBER_KEY) !== "0";
+}
+
+export function setRememberUnlock(remember: boolean): void {
+  const { local } = stores();
+  safeSet(local, REMEMBER_KEY, remember ? "1" : "0");
+  if (!remember) clearUnlockCache();
+}
+
+/**
+ * GitHub rejected the stored token (401). Recorded rather than acted on immediately, because
+ * the useful response — ask for a new token, keep everything else — belongs to the next
+ * launch as much as to this one.
+ */
+export function markTokenExpired(): void {
+  const { local } = stores();
+  safeSet(local, EXPIRED_KEY, "1");
+  clearUnlockCache();
+}
+
+export function isTokenExpired(): boolean {
+  const { local } = stores();
+  return safeGet(local, EXPIRED_KEY) === "1";
+}
+
+export function clearTokenExpired(): void {
+  const { local } = stores();
+  safeRemove(local, EXPIRED_KEY);
 }
 
 /** Load the saved connection, checking both stores so a mode change never orphans a token. */
 export function loadConnection(): Connection | null {
   const { session, local } = stores();
   const mode = getStorageMode();
-  // A PIN-wrapped token is never returned here — it requires unlockConnection().
-  if (mode === "pin") return null;
   const primary = mode === "local" ? local : session;
 
-  const token = safeGet(primary, TOKEN_KEY) ?? safeGet(session, TOKEN_KEY);
+  // In PIN mode the only token that may be returned is the unlock cache in sessionStorage —
+  // the wrapped blob still requires unlockConnection().
+  const token =
+    mode === "pin"
+      ? safeGet(session, TOKEN_KEY)
+      : (safeGet(primary, TOKEN_KEY) ?? safeGet(session, TOKEN_KEY));
   const targetRaw = safeGet(local, TARGET_KEY) ?? safeGet(session, TARGET_KEY);
   if (!token || !targetRaw) return null;
 
@@ -149,8 +212,11 @@ export function saveConnection(connection: Connection, mode: StorageMode): boole
   const { session, local } = stores();
   const { token, ...target } = connection;
 
-  // Clear both first: switching modes must not leave a copy behind in the other store.
-  clearToken();
+  // Clear every stored token first: switching modes must not leave a copy behind in the other
+  // store, and a leftover wrapped blob would send the next launch to the unlock screen for a
+  // token that is no longer the one in use.
+  clearAllTokens();
+  clearTokenExpired();
 
   const ok = safeSet(mode === "local" ? local : session, TOKEN_KEY, token);
   // The repo target is not a secret, so it persists in localStorage regardless of mode —
@@ -161,18 +227,54 @@ export function saveConnection(connection: Connection, mode: StorageMode): boole
   return ok;
 }
 
-/** Remove the token from every store, leaving the non-secret target in place. */
+/** Store the token wrapped under a passphrase (D13). */
+export async function saveWrappedConnection(
+  connection: Connection,
+  pin: string,
+): Promise<boolean> {
+  const { local } = stores();
+  const { token, ...target } = connection;
+  const wrapped = await wrapToken(token, pin);
+
+  clearAllTokens();
+  clearTokenExpired();
+  const ok = safeSet(local, WRAPPED_KEY, JSON.stringify(wrapped));
+  safeSet(local, TARGET_KEY, JSON.stringify(target));
+  safeSet(local, MODE_KEY, "pin");
+  // The token just proved itself against the API, so this session starts unlocked.
+  if (getRememberUnlock()) cacheUnlockedToken(token);
+  return ok;
+}
+
+/**
+ * Remove usable tokens, leaving the wrapped blob and the non-secret target in place.
+ *
+ * This is what an auth failure calls. Destroying the wrapped blob there is what used to throw
+ * the user back to first-run setup: the repository was still known and the passphrase was
+ * still good, but the app had forgotten that setup had ever happened (D16).
+ */
 export function clearToken(): void {
   const { session, local } = stores();
   safeRemove(session, TOKEN_KEY);
   safeRemove(local, TOKEN_KEY);
+}
+
+/** Remove the PIN-wrapped token. Only an explicit "start over" should reach this. */
+export function clearWrappedToken(): void {
+  const { local } = stores();
   safeRemove(local, WRAPPED_KEY);
+}
+
+function clearAllTokens(): void {
+  clearToken();
+  clearWrappedToken();
 }
 
 /** Full disconnect — token and target. */
 export function clearConnection(): void {
   const { session, local } = stores();
-  clearToken();
+  clearAllTokens();
+  clearTokenExpired();
   safeRemove(session, TARGET_KEY);
   safeRemove(local, TARGET_KEY);
   safeRemove(local, MODE_KEY);

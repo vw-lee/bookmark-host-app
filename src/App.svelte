@@ -7,7 +7,7 @@
    */
   import { store } from "./lib/store.svelte";
   import { GitHubError } from "./lib/api/errors";
-  import { clearConnection } from "./lib/api/tokenStore";
+  import { hasWrappedToken } from "./lib/api/tokenStore";
   import Setup from "./lib/ui/Setup.svelte";
   import Unlock from "./lib/ui/Unlock.svelte";
   import BookmarkRow from "./lib/ui/BookmarkRow.svelte";
@@ -113,10 +113,10 @@
     else store.refreshOnFocus();
   }
 
-  function disconnect() {
-    clearConnection();
-    store.disconnect();
-  }
+  // "Disconnect" now lives in Settings behind a confirmation (D16). It deletes the token and
+  // the repo settings, and one stray click on a header button was enough to make someone redo
+  // the whole PAT flow — the exact cost this app is trying to charge only once.
+  const canLock = $derived(store.connected && hasWrappedToken());
 
   const total = $derived(liveBookmarks(store.file).filter((b) => !b.archived).length);
   const errorMessage = $derived(
@@ -203,9 +203,11 @@
       >
         Settings
       </button>
-      <button class="text-xs text-[var(--color-ink-soft)] underline" onclick={disconnect}>
-        Disconnect
-      </button>
+      {#if canLock}
+        <button class="text-xs text-[var(--color-ink-soft)] underline" onclick={() => store.lock()}>
+          Lock
+        </button>
+      {/if}
     </header>
 
     <InstallPrompt
@@ -224,8 +226,14 @@
 
     {#if !store.connected}
       <p class="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
-        Not connected to GitHub — showing the copy saved on this device.
-        <button class="underline" onclick={() => (store.wantsSetup = true)}>Reconnect</button>
+        {#if store.offline}
+          <!-- Offline is a state to wait out, not a setup to redo — no token is needed here. -->
+          Offline — showing the copy saved on this device. Changes sync when the connection
+          comes back.
+        {:else}
+          Not connected to GitHub — showing the copy saved on this device.
+          <button class="underline" onclick={() => (store.wantsSetup = true)}>Reconnect</button>
+        {/if}
       </p>
     {/if}
 

@@ -13,6 +13,13 @@ import {
   saveWrappedConnection,
   unlockConnection,
   hasWrappedToken,
+  hasCompletedSetup,
+  cacheUnlockedToken,
+  clearUnlockCache,
+  getRememberUnlock,
+  markTokenExpired,
+  isTokenExpired,
+  clearTokenExpired,
   clearToken,
   type Connection,
   type StorageMode,
@@ -92,6 +99,11 @@ export class AppStore {
   wantsSetup = $state(false);
   /** A PIN-wrapped token is stored and waiting to be unlocked (D13). */
   locked = $state(false);
+  /**
+   * GitHub rejected the stored token (D16). Setup is otherwise done, so the UI asks for one
+   * new token against the repository it already knows rather than restarting first-run.
+   */
+  tokenExpired = $state(false);
 
   private client: GitHubClient | null = null;
   private sha: string | null = null;
@@ -167,7 +179,7 @@ export class AppStore {
   }
 
   /**
-   * Should the shell show the first-run form?
+   * Should the shell show the connection form?
    *
    * Deliberately keyed on `connected` rather than on `status`. `status` becomes "loading" the
    * moment a connection attempt starts, and keying on it unmounted the form mid-submit —
@@ -181,6 +193,11 @@ export class AppStore {
     if (this.wantsSetup) return true;
     // A locked token means setup is already done; the unlock screen owns the flow instead.
     if (this.locked) return false;
+    // A dead token is the one case where a token must be typed again (D16).
+    if (this.tokenExpired) return true;
+    // Otherwise: never demand setup from someone who has already done it. Being offline, or
+    // starting cold with an empty collection, is not a reason to show that wall again.
+    if (hasCompletedSetup()) return false;
     return !this.connected && liveBookmarks(this.file).length === 0;
   }
 
@@ -214,14 +231,24 @@ export class AppStore {
       if (mirror.dirty) this.status = "ready";
     }
 
-    if (hasWrappedToken()) {
-      this.locked = true;
+    // A token GitHub has already rejected cannot be rescued by a passphrase — it is the same
+    // token inside the wrapper. Go straight to asking for a new one (D16).
+    if (isTokenExpired()) {
+      this.tokenExpired = true;
       this.status = mirror ? "ready" : "disconnected";
       return;
     }
 
+    // The unlock cache, when this tab has one, is what makes a reload silent. Falling back to
+    // the lock screen only when there is genuinely no usable token is the whole of D16.
     const connection = loadConnection();
+
     if (!connection) {
+      if (hasWrappedToken()) {
+        this.locked = true;
+        this.status = mirror ? "ready" : "disconnected";
+        return;
+      }
       // A cached collection with no token is still worth showing read-only rather than
       // throwing the user back to a blank setup screen.
       this.status = mirror ? "ready" : "disconnected";
@@ -230,10 +257,27 @@ export class AppStore {
 
     try {
       await this.connect(connection, null);
-    } catch {
-      // Offline or expired token — the mirror already rendered, so this is not fatal.
+    } catch (e) {
+      // The mirror already rendered, so a failure here is not fatal — but the two causes need
+      // different answers. A dead token needs a new one; anything else (offline, GitHub down)
+      // needs only patience, and must not cost the user their unlocked session.
+      if (e instanceof GitHubError && e.kind === "auth") this.expireToken();
       if (mirror) this.status = "ready";
     }
+  }
+
+  /**
+   * Record that the stored token is no longer accepted (D16).
+   *
+   * Everything except the token survives: the repository target, the wrapped blob, and the
+   * mirror with its queued edits. Only the credential is replaced.
+   */
+  private expireToken(): void {
+    this.client = null;
+    this.tokenExpired = true;
+    this.locked = false;
+    clearToken();
+    markTokenExpired();
   }
 
   /** Window and cross-tab listeners. Registered once; torn down on disconnect. */
@@ -347,8 +391,27 @@ export class AppStore {
     const connection = await unlockConnection(pin);
     if (!connection) return false;
     this.locked = false;
-    await this.connect(connection, null);
+    try {
+      await this.connect(connection, null);
+    } catch (e) {
+      // The passphrase WAS right — that is worth keeping separate from the connection failing.
+      // Re-locking here would make a wrong passphrase and an offline network look identical.
+      if (e instanceof GitHubError && e.kind === "auth") this.expireToken();
+      else if (getRememberUnlock()) cacheUnlockedToken(connection.token);
+      return true;
+    }
+    // Cached only after the token proves itself, so a dead token is never held for a session.
+    if (getRememberUnlock()) cacheUnlockedToken(connection.token);
     return true;
+  }
+
+  /** Re-lock: forget the unlocked copy, keeping the wrapped token and the local mirror. */
+  lock(): void {
+    if (!hasWrappedToken()) return;
+    clearUnlockCache();
+    this.client = null;
+    this.locked = true;
+    this.status = "ready";
   }
 
   /** Wrap and store the current connection under a passphrase. */
@@ -376,6 +439,9 @@ export class AppStore {
       this.client = client;
       this.wantsSetup = false;
       this.locked = false;
+      // A token that just probed successfully clears any record of an earlier dead one.
+      this.tokenExpired = false;
+      clearTokenExpired();
       // "pin" is persisted by setPin(), which needs the passphrase this method does not have.
       if (mode && mode !== "pin") saveConnection(connection, mode);
       await this.load();
@@ -435,6 +501,9 @@ export class AppStore {
         return;
       }
       if (e instanceof GitHubError && e.kind === "network") this.offline = true;
+      // A token that expires while the app is open should surface as "reconnect", not as a
+      // banner the user can do nothing about — including on a quiet background poll (D16).
+      if (e instanceof GitHubError && e.kind === "auth") this.expireToken();
       // A failed background poll leaves the working view alone.
       if (!options.quiet) {
         this.error = e as Error;
@@ -698,7 +767,8 @@ export class AppStore {
         this.error = null; // offline is a state, not an error the user must act on
       } else {
         this.error = e as Error;
-        if (e instanceof GitHubError && e.kind === "auth") clearToken();
+        // The queued edits stay in the mirror and go out as soon as a new token is in place.
+        if (e instanceof GitHubError && e.kind === "auth") this.expireToken();
       }
     } finally {
       this.writing = false;
@@ -776,6 +846,7 @@ export class AppStore {
     this.error = null;
     this.wantsSetup = true;
     this.locked = false;
+    this.tokenExpired = false;
     this.dirty = false;
     this.pendingCount = 0;
     for (const off of this.teardown) off();

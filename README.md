@@ -92,14 +92,15 @@ before the phase that depends on them begins.
 | D5 | Write API | **Contents API. Git Data API deferred indefinitely** | At under 500 bookmarks (§1.1) the 1 MB ceiling is ~3x away. Revisit only if the file passes 700 KB; 3g is the tripwire. |
 | D6 | Conflict model | **Per-record last-write-wins with tombstones** | A true CRDT is overkill for single-user multi-device. Field-level merge may come later. |
 | D7 | Local cache | **IndexedDB mirror + durable outbox** | Optimistic UI without durable queueing loses data on failed commits. |
-| D8 | Token storage | **RESOLVED — `sessionStorage` default, `localStorage` opt-in behind an explicit warning** | D10 answered "no custom domain", so §5.5's `*.github.io` branch applies. The mobile friction is real and is the honest cost of a shared origin; D13 proposes a mitigation. |
+| D8 | Token storage | **RESOLVED — `sessionStorage` default, `localStorage` opt-in behind an explicit warning** | D10 answered "no custom domain", so §5.5's `*.github.io` branch applies. The mobile friction is real and is the honest cost of a shared origin; D13 mitigates it and D16 makes it survivable across stale pages. |
 | D9 | Hosting | **GitHub Pages via `actions/deploy-pages`** | Official path; the `gh-pages` branch pattern is deprecated. |
 | D10 | Custom domain | **RESOLVED — no. Hosting on `username.github.io`** | Accepted consequence: the §5.1 shared-origin exposure is permanent, and D8 takes its constrained form. A dedicated GitHub account for hosting remains the cheapest way to shrink it. |
 | D11 | Encryption at rest | **OPEN — default NO** | Zero-knowledge encryption would kill readable diffs and rule out Actions-based enrichment (§9). |
 | D12 | Taxonomy | **Tags only, `/`-delimited, lowercase canonical, descendant-inclusive filtering** | Folders and tags were two overlapping taxonomies. Derived tree nodes make an inconsistent hierarchy unrepresentable (§3.3). |
-| D13 | Token at rest | **BUILT — PIN-wrapped `localStorage`, now the default mode** | PBKDF2 (600k) → AES-GCM. Converts "a sibling page can take your token" into "an attacker must target this app specifically, then do work". Does **not** defend against XSS in this app after unlock, nor against offline grinding of a short passphrase — see `tokenCrypto.ts` for the exact claim. |
+| D13 | Token at rest | **BUILT — PIN-wrapped `localStorage`, now the default mode** | PBKDF2 (600k) → AES-GCM. Converts "a sibling page can take your token" into "an attacker must target this app specifically, then do work". Does **not** defend against XSS in this app after unlock, nor against offline grinding of a short passphrase — see `tokenCrypto.ts` for the exact claim. D16 covers how often the passphrase is asked for. |
 | D14 | E-ink support | **Deferred to Phase 7 polish, after the MVP** | User decision. Two zero-cost habits during the MVP keep the deferral cheap: colour behind design tokens, and no animation built that would only be removed (§1.2). |
 | D15 | Outbox shape | **Whole-document mirror plus a dirty flag, not a replayable op log** | The LWW+tombstone model (D6) already reconciles two documents without knowing which edits produced them. An op log would be more machinery for the same result, plus a new failure mode: a log that has drifted from the document it describes. |
+| D16 | Setup frequency | **BUILT — setup once; passphrase thereafter; a dedicated reconnect form when the token expires** | The wall in D13's flow was never the passphrase, it was landing back on first-run setup. Three things cause that and all three are now fixed: an auth failure no longer deletes the wrapped token, an unlocked session survives a reload via a per-tab cache, and a known repository renders as "paste a new token" rather than as three steps. Only an explicit Disconnect undoes setup. |
 
 ---
 
@@ -482,6 +483,35 @@ the default is conditional rather than flat:
 | `*.github.io` | Installed PWA | `sessionStorage`, `localStorage` opt-in behind an explicit warning | Origin is shared with every other project on the account. The friction is the honest cost of that choice. |
 | `*.github.io` | Browser tab | `sessionStorage` | Highest exposure, lowest need for persistence. |
 | Shared or public device | Any | `sessionStorage`, forced | Offered as a "public computer" toggle in the first-run modal. |
+
+#### 5.5.1 How Often the User Is Asked (D16)
+
+Storage mode decides *what* is kept; this decides *how often the user pays for it*. Setup —
+create a repo, create a fine-grained PAT, paste it — is expensive enough that it must happen
+exactly once per device, and the app previously charged it again in three situations that had
+nothing to do with the user's setup being wrong:
+
+1. **A 401 cleared the wrapped token**, so the next launch had no record that setup had ever
+   happened. Fixed: `clearToken()` now removes only usable tokens; `clearWrappedToken()` is
+   reached exclusively by an explicit disconnect.
+2. **Any reload demanded the passphrase**, including one caused by the browser discarding a
+   long-idle tab. Fixed: the unlocked token is cached in `sessionStorage` for the life of the
+   browsing context, on by default, switchable in Settings and on the unlock screen. That is
+   the same exposure the `session` mode already accepts, and it is per-tab.
+3. **A known repository still rendered the three-step wall.** Fixed: `Setup.svelte` has a
+   reconnect shape — prefilled target, one token field, instructions behind a disclosure.
+
+The resulting ladder, cheapest first:
+
+| Situation | What the user does |
+|-----------|--------------------|
+| Reload, restored tab, returning to a sleeping PWA | Nothing |
+| New tab, new browser session, or after "Lock now" | Passphrase |
+| Token expired (fine-grained PATs always do) | Paste one new token |
+| Explicit Disconnect | Full setup |
+
+An expired token is detected from the 401 and recorded, so the next launch skips the
+passphrase prompt it would otherwise waste: the wrapped blob holds that same dead token.
 
 This makes the custom-domain question (§16.1) materially more than a nicety: **it is what
 decides whether the mobile experience can be both usable and safe.** Detection is

@@ -297,3 +297,57 @@ describe("AppStore — conflict resolution (task 3a)", () => {
     expect(store.error).toBeNull();
   });
 });
+
+describe("AppStore — token expiry (D16)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("asks for one new token rather than a whole new setup", async () => {
+    const { fetch: f } = scriptedFetch([
+      { body: { name: "r" } }, // probe
+      fileResponse(serialize(emptyFile("2026-08-20T08:00:00.000Z"))), // initial read
+      { status: 401 }, // the token expired while the app was open
+    ]);
+    const store = new AppStore();
+    await connect(store, f);
+    await store.setPin(
+      { token: "t", owner: "o", repo: "r", path: "data/bookmarks.json" },
+      "correct-horse-battery",
+    );
+
+    expect(store.tokenExpired).toBe(false);
+    await store.load();
+
+    expect(store.tokenExpired).toBe(true);
+    expect(store.connected).toBe(false);
+    // The wrapped token and the repository survive — only the credential is being replaced.
+    expect(localStorage.getItem("bm.token.enc")).not.toBeNull();
+    expect(localStorage.getItem("bm.target")).not.toBeNull();
+    // ...and the dead token is not left sitting unlocked.
+    expect(sessionStorage.getItem("bm.token")).toBeNull();
+  });
+
+  it("does not show the setup form to someone who has already completed it", async () => {
+    const { fetch: f } = scriptedFetch([
+      { body: { name: "r" } },
+      fileResponse(serialize(emptyFile("2026-08-20T08:00:00.000Z"))),
+    ]);
+    const store = new AppStore();
+    await connect(store, f);
+    await store.setPin(
+      { token: "t", owner: "o", repo: "r", path: "data/bookmarks.json" },
+      "correct-horse-battery",
+    );
+
+    // Losing the connection — a stale page, a dropped network — is not a reason to reconfigure.
+    store.lock();
+    expect(store.connected).toBe(false);
+    expect(store.locked).toBe(true);
+    expect(store.needsSetup).toBe(false);
+
+    store.locked = false;
+    expect(store.needsSetup).toBe(false);
+  });
+});
