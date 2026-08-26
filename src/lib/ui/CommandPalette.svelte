@@ -7,6 +7,7 @@
    * pointing is slow and hover does not exist (§1.2).
    */
   import { store } from "../store.svelte";
+  import { view, VIEW_MODES, VIEW_LABELS } from "./viewMode.svelte";
   import { rank, type Command } from "./palette";
   import { liveBookmarks } from "../sync/merge";
   import { isSafeUrl } from "../schema/normalize";
@@ -51,6 +52,16 @@
         },
       },
       { id: "sync", kind: "action", label: "Sync now", run: () => store.flushNow() },
+      // One entry per mode rather than a single "cycle view": the palette is searched by name,
+      // and someone typing "table" wants that mode, not the next one along.
+      ...VIEW_MODES.map((mode) => ({
+        id: `view-${mode}`,
+        kind: "action" as const,
+        label: `View as ${VIEW_LABELS[mode].toLowerCase()}`,
+        detail: view.current === mode ? "current" : "V",
+        keywords: "view mode layout grid gallery",
+        run: () => view.set(mode),
+      })),
     ];
 
     const tags: Command[] = [...store.tagCounts.entries()].map(([tag, count]) => ({

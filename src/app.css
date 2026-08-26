@@ -110,6 +110,34 @@ body {
   min-height: 2.75rem;
 }
 
+/*
+ * View modes on e-ink (task 7g, §1.2).
+ *
+ * A multi-column grid is wrong on a panel that repaints slowly and has no colour: columns halve
+ * the effective text size and the generated tiles become identical grey blocks. So every grid
+ * collapses to one column, and the tile keeps its letters while losing its fill.
+ */
+:root[data-eink] .bm-grid {
+  grid-template-columns: 1fr !important;
+}
+
+:root[data-eink] .bm-tile {
+  background: transparent !important;
+  color: #000000 !important;
+  border: 1px solid #000000;
+}
+
+/*
+ * The active view button is filled with the accent colour, which the e-ink button rule above
+ * strips — leaving the selection signalled by nothing at all. Weight, underline and a heavier
+ * border carry it instead, per the no-colour-only-signalling rule.
+ */
+:root[data-eink] [aria-pressed="true"] {
+  border-width: 2px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 /* Respect the OS preference regardless of theme. */
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -31,6 +31,7 @@ import { emptyFile, SCHEMA_VERSION, type Bookmark, type BookmarkFile } from "./s
 import { normalizeTags, normalizeUrlKey, cleanText, tagMatches } from "./schema/normalize";
 import { ulid } from "./schema/ulid";
 import { merge, liveBookmarks } from "./sync/merge";
+import { comparator, type SortKey, type SortDir } from "./ui/sort";
 import { toBookmarks, type MergePlan } from "./io/netscape";
 import {
   findDuplicates,
@@ -83,6 +84,14 @@ export class AppStore {
   page = $state(0);
   pageSize = $state(50);
 
+  /**
+   * List ordering (task 7g). The defaults reproduce the original fixed order — pinned first,
+   * then newest added — so switching view modes without touching a column header changes
+   * nothing about which bookmarks appear where.
+   */
+  sortKey = $state<SortKey>("added");
+  sortDir = $state<SortDir>("desc");
+
   /** True when the browser reports no connection, or a write failed on the network (3d). */
   offline = $state(typeof navigator !== "undefined" ? !navigator.onLine : false);
   /** Set while the queue is parked on a rate limit; epoch ms (task 2d). */
@@ -131,11 +140,7 @@ export class AppStore {
           b.tags.some((t) => t.includes(q))
         );
       })
-      .sort((a, b) => {
-        // Pinned first, then newest by creation. ULIDs sort by time, so id works as the key.
-        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-        return a.id < b.id ? 1 : -1;
-      });
+      .sort(comparator(this.sortKey, this.sortDir));
   }
 
   /** The current page of `visible`. */

@@ -11,6 +11,10 @@
   import Setup from "./lib/ui/Setup.svelte";
   import Unlock from "./lib/ui/Unlock.svelte";
   import BookmarkRow from "./lib/ui/BookmarkRow.svelte";
+  import BookmarkCard from "./lib/ui/BookmarkCard.svelte";
+  import BookmarkTile from "./lib/ui/BookmarkTile.svelte";
+  import BookmarkTable from "./lib/ui/BookmarkTable.svelte";
+  import ViewSwitcher from "./lib/ui/ViewSwitcher.svelte";
   import TagTree from "./lib/ui/TagTree.svelte";
   import QuickAdd from "./lib/ui/QuickAdd.svelte";
   import StatusBar from "./lib/ui/StatusBar.svelte";
@@ -22,6 +26,7 @@
   import CommandPalette from "./lib/ui/CommandPalette.svelte";
   import Pager from "./lib/ui/Pager.svelte";
   import { theme } from "./lib/ui/theme.svelte";
+  import { view } from "./lib/ui/viewMode.svelte";
   import {
     registerServiceWorker,
     requestBackgroundSync,
@@ -44,6 +49,14 @@
   // Applied before anything paints, so there is no flash of the wrong theme.
   $effect(() => {
     theme.apply();
+  });
+
+  // A screenful differs by mode (7g), so the page size follows it. Page 0 rather than a
+  // recomputed offset: after the rows-per-page changes, "the page you were on" no longer names
+  // the same bookmarks, and landing somewhere unrelated is worse than landing at the top.
+  $effect(() => {
+    store.pageSize = view.pageSize;
+    store.page = 0;
   });
 
   // A filter change means a different result set — start at the top of it.
@@ -102,6 +115,11 @@
     if (event.key === "?" && !inField) {
       event.preventDefault();
       paletteOpen = true;
+    }
+    // `v` cycles List -> Cards -> Tiles -> Table (7g), matching the palette entry.
+    if (event.key.toLowerCase() === "v" && !inField && !event.metaKey && !event.ctrlKey) {
+      event.preventDefault();
+      view.next();
     }
   }
 
@@ -178,6 +196,8 @@
           Synced
         {/if}
       </span>
+
+      <ViewSwitcher />
 
       <button
         class="text-xs text-[var(--color-ink-soft)] underline"
@@ -269,6 +289,42 @@
                 Nothing matches that filter.
               {/if}
             </p>
+          {:else if view.current === "table"}
+            <BookmarkTable
+              items={store.pageItems}
+              onTag={(tag) => (store.selectedTag = tag)}
+              onDelete={(id) => store.deleteBookmark(id)}
+              onUpdate={(id, patch) => store.updateBookmark(id, patch)}
+            />
+          {:else if view.current === "cards"}
+            <!-- auto-fill rather than a fixed column count: the grid adapts to the sidebar
+                 being open, to a phone, and to a tablet without a breakpoint for each. -->
+            <div
+              class="bm-grid grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3 p-4"
+              role="list"
+            >
+              {#each store.pageItems as bookmark (bookmark.id)}
+                <BookmarkCard
+                  {bookmark}
+                  onTag={(tag) => (store.selectedTag = tag)}
+                  onDelete={(id) => store.deleteBookmark(id)}
+                  onUpdate={(id, patch) => store.updateBookmark(id, patch)}
+                />
+              {/each}
+            </div>
+          {:else if view.current === "tiles"}
+            <div
+              class="bm-grid grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2 p-4"
+              role="list"
+            >
+              {#each store.pageItems as bookmark (bookmark.id)}
+                <BookmarkTile
+                  {bookmark}
+                  onDelete={(id) => store.deleteBookmark(id)}
+                  onUpdate={(id, patch) => store.updateBookmark(id, patch)}
+                />
+              {/each}
+            </div>
           {:else}
             {#each store.pageItems as bookmark (bookmark.id)}
               <BookmarkRow

@@ -101,6 +101,7 @@ before the phase that depends on them begins.
 | D14 | E-ink support | **Deferred to Phase 7 polish, after the MVP** | User decision. Two zero-cost habits during the MVP keep the deferral cheap: colour behind design tokens, and no animation built that would only be removed (§1.2). |
 | D15 | Outbox shape | **Whole-document mirror plus a dirty flag, not a replayable op log** | The LWW+tombstone model (D6) already reconciles two documents without knowing which edits produced them. An op log would be more machinery for the same result, plus a new failure mode: a log that has drifted from the document it describes. |
 | D16 | Setup frequency | **BUILT — setup once; passphrase thereafter; a dedicated reconnect form when the token expires** | The wall in D13's flow was never the passphrase, it was landing back on first-run setup. Three things cause that and all three are now fixed: an auth failure no longer deletes the wrapped token, an unlocked session survives a reload via a per-tab cache, and a known repository renders as "paste a new token" rather than as three steps. Only an explicit Disconnect undoes setup. |
+| D17 | Card imagery | **BUILT — generated domain tiles. No favicons, no `og:image`** | A grid needs a visual anchor, and both fetched options cost more than they return. Favicons and preview images would make the app issue requests to a few dozen third-party hosts on every paint, where today it talks only to `api.github.com`; storing the images instead reaches the 1 MB ceiling (§4.3) on the first card. A tile derived from the URL is free, offline, deterministic, and cannot drift — the §3.3.1 argument applied to presentation. `og:image` additionally needs a schema v3 migration for a field that would be null on every existing record. |
 
 ---
 
@@ -605,10 +606,10 @@ been saved, when the value is obvious.
 
 | Area | State |
 |------|-------|
-| Tests | 269 passing across 20 files |
-| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, palette ranking, offline/rate-limit/refresh/pagination |
-| Bundle | ~190 KB raw / ~56 KB gzipped |
-| Source | ~8,800 lines; largest file 789 (limit 2,000) |
+| Tests | 325 passing across 24 files |
+| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, palette ranking, offline/rate-limit/refresh/pagination, domain tiles, sort comparator, view modes, per-view render of the §5.4 unsafe-URL gate |
+| Bundle | ~212 KB raw / ~64 KB gzipped |
+| Source | ~10,200 lines; largest file 865 (limit 2,000) |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
 
 Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before committing.
@@ -620,7 +621,11 @@ Honest limits, so nothing here reads as a stronger claim than it is:
 * **5e — real devices.** Android share intents and Background Sync wake-ups are unit-tested but
   have never run on hardware. This is the one task that cannot be closed from a terminal.
 * **E-ink rendering.** Built to the §1.2 specification and verified in CSS; never seen on a
-  panel.
+  panel. The 7g single-column grid collapse is in the same position.
+* **7g layout on a real screen.** The four view modes are asserted by mounting each component
+  and checking what it renders — including, per mode, that an unsafe URL never becomes an
+  anchor. What no test covers is whether the grid *looks* right: column widths, card heights and
+  the tile palette have not been viewed in a browser.
 * **Deployment.** The Pages workflow is written and the build is verified locally, but Pages
   has not been enabled and nothing has been pushed.
 * **The Phase 6 workflows** run correctly against live sites locally; they have not run inside
@@ -780,6 +785,68 @@ and the `scripts/` directory across. The app repo keeps them only as the canonic
 * [x] **7f.** Settings: token storage mode (§5.5, showing which mode is active and why),
   foreground refresh interval (3k; off / 1 / 5 / 15 min), tombstone retention, storage
   persistence state (§6.3), theme.
+* [x] **7g.** View modes — list, cards, tiles and table, with generated domain tiles (D17),
+  sortable table columns, and a per-mode page size. Full model in §14.1.
+
+### 14.1 View Modes (7g)
+
+Four renderings of the same page of bookmarks. The mode is a **device** preference stored in
+`localStorage` (`bm.view`), never in `bookmarks.json` — a phone wants tiles where a desktop
+wants a table, and syncing the choice would make two devices fight over it. Same reasoning as
+the theme (7b).
+
+| Mode | Shape | For | Page size |
+|------|-------|-----|-----------|
+| **List** | Full-width rows | The default. Keyboard and e-ink baseline. | 50 |
+| **Cards** | Grid, `auto-fill` from 15rem | Browsing and rediscovery. | 24 |
+| **Tiles** | Grid, `auto-fill` from 7rem | Speed dial — a launch surface, not a management one. | 60 |
+| **Table** | Sortable columns | Triage and bulk management on a desktop. | 50 |
+
+Page size follows the mode because a screenful genuinely differs, and pagination (7c) is
+fixed-size rather than viewport-aware. Changing modes resets to page 0: once rows-per-page
+changes, "the page you were on" no longer names the same bookmarks.
+
+**Editing expands in place in every mode** — a card and a tile grow to span every column, a
+table row opens a spanning row beneath itself. No mode opens a dialog. That is the original row
+view's reasoning held to: a modal needs a focus trap, and unwinding a focus trap for keyboard
+and e-ink use is a cost none of these layouts is worth.
+
+**One edit form and one action bar, shared.** `BookmarkEditForm.svelte` and
+`BookmarkActions.svelte` were extracted from the row view rather than copied into the new ones.
+The URL check inside that form is a security boundary (§5.4), not a convenience, and is not
+something to keep a second slightly different version of.
+
+**Sorting lives in the store, not in the table.** The column a user picks still applies after
+they switch to cards; a header that silently stopped applying would read as a bug. Pinned
+records float to the top under every key and direction — a pin means "keep this where I can see
+it", and honouring it only in the default order would look like pinning had broken.
+
+#### Generated domain tiles
+
+Each bookmark gets a coloured tile bearing one or two letters, derived from its URL (D17):
+`news.ycombinator.com` → a consistent "Y", `rust-lang.org` → "RL". Subdomains inherit their
+parent's colour, because `developer.mozilla.org` and `bugzilla.mozilla.org` are the same place.
+
+* **Zero network, zero bytes stored.** The tile is a pure function of the hostname, so it works
+  offline, is identical on every device, and adds nothing to the file or to the merge.
+* **Colour is decoration; the letters are the identity.** This is what lets the e-ink theme drop
+  the fill and keep a bordered letter box without losing information, and what keeps the grid
+  legible without colour vision.
+* **`oklch`, not `hsl`.** oklch lightness is perceptually uniform, so white text clears 4.5:1 on
+  every hue at a fixed L. In hsl, yellow and blue at one lightness differ enough that one of
+  them would always fail contrast.
+* **FNV-1a for the hue**, so `apple.com` and `appel.com` do not land on the same colour.
+
+#### E-ink behaviour (§1.2)
+
+Every grid collapses to a single column under `[data-eink]` — columns halve the effective text
+size on a slow panel, and the tiles would all render as identical grey blocks. The active view
+button is filled with the accent colour in the other themes, which the e-ink button rule
+strips; weight, underline and a heavier border carry the selected state instead, so nothing is
+signalled by colour alone.
+
+Actions are always visible rather than revealed on hover, in every mode. §1.2 forbids
+hover-dependent affordances, and the same rule is what makes the grid work on a touchscreen.
 
 ---
 
