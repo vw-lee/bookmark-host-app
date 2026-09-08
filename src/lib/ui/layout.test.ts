@@ -86,7 +86,7 @@ describe("app shell — one viewport, no page scroll (D18)", () => {
 
   it("gives the tag sidebar its own scroll region, with All pinned above it", async () => {
     const target = await connected();
-    const tagList = target.querySelector("nav ul") as HTMLElement;
+    const tagList = target.querySelector('nav ul[aria-label="Tags"]') as HTMLElement;
 
     expect(tagList.className).toContain("bm-scroll");
     expect(tagList.className).toContain("min-h-0");

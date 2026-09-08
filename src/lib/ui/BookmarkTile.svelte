@@ -15,16 +15,21 @@
   import BookmarkEditForm from "./BookmarkEditForm.svelte";
   import BookmarkActions from "./BookmarkActions.svelte";
   import DomainTile from "./DomainTile.svelte";
+  import SelectBox from "./SelectBox.svelte";
+  import { store } from "../store.svelte";
 
   interface Props {
     bookmark: Bookmark;
     onDelete: (id: string) => void;
     onUpdate: (id: string, patch: Partial<Bookmark>) => void;
+    /** Position on the current page, so the keyboard cursor can find this tile (task 7m). */
+    index?: number;
+    focused?: boolean;
   }
 
-  const { bookmark, onDelete, onUpdate }: Props = $props();
+  const { bookmark, onDelete, onUpdate, index, focused = false }: Props = $props();
 
-  let editing = $state(false);
+  const editing = $derived(store.editingId === bookmark.id);
 
   const safe = $derived(isSafeUrl(bookmark.url));
   const host = $derived(hostOf(bookmark.url));
@@ -32,12 +37,18 @@
 
 <article
   role="listitem"
-  class="flex flex-col items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-2 text-center
-         {bookmark.archived ? 'opacity-60' : ''} {editing ? 'col-span-full items-stretch text-left' : ''}"
+  data-bm-index={index}
+  class="relative flex flex-col items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-2 text-center
+         {bookmark.archived ? 'opacity-60' : ''} {editing ? 'col-span-full items-stretch text-left' : ''}
+         {focused ? 'ring-2 ring-[var(--color-accent)]' : ''}"
 >
   {#if editing}
-    <BookmarkEditForm {bookmark} {onUpdate} onClose={() => (editing = false)} />
+    <BookmarkEditForm {bookmark} {onUpdate} onClose={() => (store.editingId = null)} />
   {:else}
+    <!-- Absolute, because a tile is 7rem wide and has no row to spare for a checkbox. -->
+    <div class="absolute top-1 left-1">
+      <SelectBox {bookmark} />
+    </div>
     {#if safe}
       <a
         class="flex w-full flex-col items-center gap-1.5 rounded p-1 hover:bg-[var(--color-surface)]"
@@ -74,7 +85,7 @@
         {onDelete}
         {onUpdate}
         compact
-        onEdit={() => (editing = true)}
+        onEdit={() => (store.editingId = bookmark.id)}
       />
     </div>
   {/if}

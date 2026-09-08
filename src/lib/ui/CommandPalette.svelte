@@ -33,11 +33,26 @@
   const commands = $derived.by<Command[]>(() => {
     const actions: Command[] = [
       { id: "add", kind: "action", label: "Add bookmark", detail: "Ctrl+K", run: onAdd },
+      // One entry per scope rather than a toggle (task 7i): three states cannot be cycled
+      // through a single label without the label lying about two of them.
       {
-        id: "archived",
+        id: "scope:active",
         kind: "action",
-        label: store.showArchived ? "Hide archived" : "Show archived",
-        run: () => (store.showArchived = !store.showArchived),
+        label: "Show active bookmarks",
+        run: () => (store.scope = "active"),
+      },
+      {
+        id: "scope:archived",
+        kind: "action",
+        label: "Show archived",
+        run: () => (store.scope = "archived"),
+      },
+      {
+        id: "scope:trash",
+        kind: "action",
+        label: "Show trash",
+        keywords: "deleted restore",
+        run: () => (store.scope = "trash"),
       },
       { id: "import", kind: "action", label: "Import and export", run: onImport },
       { id: "tools", kind: "action", label: "Bulk tools", keywords: "duplicates rename tag", run: onTools },
@@ -72,8 +87,9 @@
       run: () => (store.selectedTag = tag),
     }));
 
+    // Every live record, archived ones included: the palette is a jump-to tool, and refusing
+    // to find something the user knows they saved is worse than showing an archived hit.
     const bookmarks: Command[] = liveBookmarks(store.file)
-      .filter((b) => store.showArchived || !b.archived)
       .map((b) => ({
         id: `bm:${b.id}`,
         kind: "bookmark",

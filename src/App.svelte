@@ -24,6 +24,9 @@
   import InstallPrompt from "./lib/ui/InstallPrompt.svelte";
   import ErrorBanner from "./lib/ui/ErrorBanner.svelte";
   import CommandPalette from "./lib/ui/CommandPalette.svelte";
+  import Shortcuts from "./lib/ui/Shortcuts.svelte";
+  import UndoToast from "./lib/ui/UndoToast.svelte";
+  import SelectionBar from "./lib/ui/SelectionBar.svelte";
   import Pager from "./lib/ui/Pager.svelte";
   import { theme } from "./lib/ui/theme.svelte";
   import { view } from "./lib/ui/viewMode.svelte";
@@ -35,12 +38,20 @@
     clearShareParams,
   } from "./lib/pwa/install";
   import { liveBookmarks } from "./lib/sync/merge";
+  import { isSafeUrl } from "./lib/schema/normalize";
 
   let adding = $state(false);
   let settingsOpen = $state(false);
   let ioOpen = $state(false);
   let bulkOpen = $state(false);
   let paletteOpen = $state(false);
+  let shortcutsOpen = $state(false);
+  /**
+   * Which row the keyboard is on (task 7m). An index into the current page rather than an id:
+   * the list is what is being navigated, so "the third row" survives an edit that changes a
+   * record, and -1 means the keyboard has not entered the list yet.
+   */
+  let focusedIndex = $state(-1);
   let installAvailable = $state(false);
   let installDismissed = $state(false);
   let sharedNotice = $state<string | null>(null);
@@ -63,8 +74,15 @@
   $effect(() => {
     void store.query;
     void store.selectedTag;
-    void store.showArchived;
+    void store.scope;
     store.page = 0;
+    focusedIndex = -1;
+  });
+
+  // The focused row must exist. A delete, a filter, or a page turn can shorten the page under
+  // the cursor, and a cursor past the end silently swallows every subsequent keypress.
+  $effect(() => {
+    if (focusedIndex >= store.pageItems.length) focusedIndex = store.pageItems.length - 1;
   });
 
   // Deleting, archiving or merging can shrink the list while the user sits on a later page,
@@ -98,8 +116,32 @@
     if (store.pendingCount > 0) void requestBackgroundSync();
   });
 
+  /** Move the keyboard cursor and bring the row into view (task 7m). */
+  function moveFocus(delta: number) {
+    const items = store.pageItems;
+    if (items.length === 0) return;
+
+    const next = focusedIndex < 0 ? 0 : focusedIndex + delta;
+    focusedIndex = Math.min(items.length - 1, Math.max(0, next));
+
+    // The list scrolls inside its own region (D18), so `block: "nearest"` scrolls that region
+    // rather than the page — and moves nothing at all when the row is already visible.
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-bm-index="${focusedIndex}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  const focused = $derived(focusedIndex >= 0 ? store.pageItems[focusedIndex] : undefined);
+
   function onKeydown(event: KeyboardEvent) {
-    const inField = ["INPUT", "TEXTAREA"].includes((event.target as HTMLElement)?.tagName);
+    const target = event.target as HTMLElement | null;
+    // contenteditable is not in use today, but a shortcut that eats keystrokes in a field the
+    // app grows later is a bug nobody connects back to this function.
+    const inField =
+      ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "") ||
+      target?.isContentEditable === true;
 
     // Ctrl/Cmd-K opens the palette; Ctrl/Cmd-Shift-K jumps straight to adding.
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -108,18 +150,75 @@
       else paletteOpen = true;
       return;
     }
-    if (event.key === "/" && !inField) {
+
+    if (event.key === "Escape" && shortcutsOpen) {
+      event.preventDefault();
+      shortcutsOpen = false;
+      return;
+    }
+
+    if (event.key === "Escape" && !paletteOpen) {
+      // A selection left over from an earlier filter is the most common thing to want out of.
+      if (store.selection.length > 0) {
+        event.preventDefault();
+        store.clearSelection();
+      }
+      return;
+    }
+
+    if (inField || event.metaKey || event.ctrlKey || event.altKey) return;
+
+    if (event.key === "/") {
       event.preventDefault();
       searchInput?.focus();
+      return;
     }
-    if (event.key === "?" && !inField) {
+    if (event.key === "?") {
       event.preventDefault();
-      paletteOpen = true;
+      shortcutsOpen = true;
+      return;
     }
     // `v` cycles List -> Cards -> Tiles -> Table (7g), matching the palette entry.
-    if (event.key.toLowerCase() === "v" && !inField && !event.metaKey && !event.ctrlKey) {
+    if (event.key.toLowerCase() === "v") {
       event.preventDefault();
       view.next();
+      return;
+    }
+
+    // Below here: list navigation, which only makes sense with a list on screen.
+    if (!appShell || store.pageItems.length === 0) return;
+
+    if (event.key === "j" || event.key === "ArrowDown") {
+      event.preventDefault();
+      moveFocus(1);
+      return;
+    }
+    if (event.key === "k" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveFocus(-1);
+      return;
+    }
+    if (!focused) return;
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      // The same render-time gate as every view (§5.4): never open an unsafe scheme.
+      if (isSafeUrl(focused.url)) window.open(focused.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (event.key === "x") {
+      event.preventDefault();
+      store.toggleSelected(focused.id);
+      return;
+    }
+    if (event.key === "e") {
+      event.preventDefault();
+      store.editingId = focused.id;
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      store.deleteBookmark(focused.id);
     }
   }
 
@@ -200,7 +299,7 @@
         bind:this={searchInput}
         bind:value={store.query}
         class="min-w-48 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-1.5 text-sm"
-        placeholder="Search title, URL, description, tags…  (press /)"
+        placeholder="Search, or try tag:dev is:untagged site:example.com  (press /)"
         aria-label="Search bookmarks"
       />
 
@@ -231,9 +330,11 @@
 
       <button
         class="text-xs text-[var(--color-ink-soft)] underline"
-        onclick={() => (store.showArchived = !store.showArchived)}
+        onclick={() => (shortcutsOpen = true)}
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (press ?)"
       >
-        {store.showArchived ? "Hide archived" : "Show archived"}
+        Shortcuts
       </button>
       <button
         class="text-xs text-[var(--color-ink-soft)] underline"
@@ -273,6 +374,8 @@
     {/if}
 
     <StatusBar />
+
+    <SelectionBar />
 
     {#if !store.connected}
       <p class="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
@@ -330,6 +433,7 @@
           {:else if view.current === "table"}
             <BookmarkTable
               items={store.pageItems}
+              {focusedIndex}
               onTag={(tag) => (store.selectedTag = tag)}
               onDelete={(id) => store.deleteBookmark(id)}
               onUpdate={(id, patch) => store.updateBookmark(id, patch)}
@@ -341,9 +445,11 @@
               class="bm-grid grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3 p-4"
               role="list"
             >
-              {#each store.pageItems as bookmark (bookmark.id)}
+              {#each store.pageItems as bookmark, i (bookmark.id)}
                 <BookmarkCard
                   {bookmark}
+                  index={i}
+                  focused={i === focusedIndex}
                   onTag={(tag) => (store.selectedTag = tag)}
                   onDelete={(id) => store.deleteBookmark(id)}
                   onUpdate={(id, patch) => store.updateBookmark(id, patch)}
@@ -355,18 +461,22 @@
               class="bm-grid grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2 p-4"
               role="list"
             >
-              {#each store.pageItems as bookmark (bookmark.id)}
+              {#each store.pageItems as bookmark, i (bookmark.id)}
                 <BookmarkTile
                   {bookmark}
+                  index={i}
+                  focused={i === focusedIndex}
                   onDelete={(id) => store.deleteBookmark(id)}
                   onUpdate={(id, patch) => store.updateBookmark(id, patch)}
                 />
               {/each}
             </div>
           {:else}
-            {#each store.pageItems as bookmark (bookmark.id)}
+            {#each store.pageItems as bookmark, i (bookmark.id)}
               <BookmarkRow
                 {bookmark}
+                index={i}
+                focused={i === focusedIndex}
                 onTag={(tag) => (store.selectedTag = tag)}
                 onDelete={(id) => store.deleteBookmark(id)}
                 onUpdate={(id, patch) => store.updateBookmark(id, patch)}
@@ -399,6 +509,12 @@
 
 {#if bulkOpen}
   <BulkTools onClose={() => (bulkOpen = false)} />
+{/if}
+
+<UndoToast />
+
+{#if shortcutsOpen}
+  <Shortcuts onClose={() => (shortcutsOpen = false)} />
 {/if}
 
 {#if paletteOpen}

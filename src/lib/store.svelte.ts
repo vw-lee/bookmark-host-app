@@ -29,6 +29,7 @@ import { migrate, needsMigration } from "./schema/migrate";
 import { serialize } from "./schema/serialize";
 import { emptyFile, SCHEMA_VERSION, type Bookmark, type BookmarkFile } from "./schema/types";
 import { normalizeTags, normalizeUrlKey, cleanText, tagMatches } from "./schema/normalize";
+import { parseQuery, matchesQuery, isEmptyQuery } from "./schema/search";
 import { ulid } from "./schema/ulid";
 import { merge, liveBookmarks } from "./sync/merge";
 import { comparator, type SortKey, type SortDir } from "./ui/sort";
@@ -51,6 +52,26 @@ import {
 } from "./sync/persistence";
 
 export type Status = "disconnected" | "loading" | "ready" | "error";
+
+/** Which pile of records the list is showing (task 7i). */
+export type Scope = "active" | "archived" | "trash";
+
+/**
+ * How long an undoable action stays undoable (task 7j).
+ *
+ * Longer than the 3s write debounce on purpose: the offer must outlive the commit, or the
+ * window would close exactly when the user notices the mistake. Undo after the commit is fine
+ * — it writes the previous state back as a new commit, which is what git is for.
+ */
+export const UNDO_WINDOW_MS = 12_000;
+
+export interface UndoableAction {
+  /** Shown in the toast: "Deleted The Rust Book". */
+  label: string;
+  /** The whole bookmarks array as it was. Cheap to keep, because every write is immutable. */
+  bookmarks: Bookmark[];
+  at: number;
+}
 
 /** Field caps, applied on every write path (§5.4). */
 const MAX_TITLE = 500;
@@ -75,7 +96,16 @@ export class AppStore {
 
   query = $state("");
   selectedTag = $state<string | null>(null);
-  showArchived = $state(false);
+
+  /**
+   * Which pile is on screen (task 7i). Replaces the old `showArchived` boolean, which could
+   * describe two of these three states and had no way to name the third at all.
+   *
+   * Deleting writes a tombstone that merge.ts keeps for 90 days (§3.2), so "trash" was already
+   * real data with no way to look at it — the app counted deleted records in Settings and then
+   * offered no way to get one back.
+   */
+  scope = $state<Scope>("active");
 
   /**
    * Pagination (task 7c) — not virtual scrolling. Under 500 bookmarks virtualisation buys
@@ -114,6 +144,28 @@ export class AppStore {
    */
   tokenExpired = $state(false);
 
+  /**
+   * The most recent reversible action (task 7j), or null once it has been undone, superseded
+   * or timed out. The toast reads this; nothing else should write it.
+   */
+  undoable = $state<UndoableAction | null>(null);
+
+  /**
+   * Ids picked out for a bulk operation (task 7k). Ids rather than records, so a selection
+   * survives those records being replaced by an edit, a sync, or another tab's commit.
+   */
+  selection = $state<string[]>([]);
+
+  /**
+   * Which record has its edit form open (task 7m).
+   *
+   * Held centrally rather than per row so the `e` shortcut can open one, and so only one form
+   * is ever open at a time — the table already enforced that, and a list of six half-filled
+   * forms was never the intent in the other views either.
+   */
+  editingId = $state<string | null>(null);
+
+  private undoTimer: ReturnType<typeof setTimeout> | null = null;
   private client: GitHubClient | null = null;
   private sha: string | null = null;
   private etag: string | null = null;
@@ -123,23 +175,31 @@ export class AppStore {
   private dirty = false;
   private teardown: (() => void)[] = [];
 
-  /** Live, non-archived records matching the current search and tag filter. */
+  /** Every record in the current scope, before the search and tag filter narrow it. */
+  private inScope(scope: Scope = this.scope): Bookmark[] {
+    if (scope === "trash") return this.file.bookmarks.filter((b) => b.deletedAt);
+    const live = liveBookmarks(this.file);
+    return scope === "archived" ? live.filter((b) => b.archived) : live.filter((b) => !b.archived);
+  }
+
+  /** How many records each scope holds, so the sidebar can label them (task 7i). */
+  get scopeCounts(): Record<Scope, number> {
+    return {
+      active: this.inScope("active").length,
+      archived: this.inScope("archived").length,
+      trash: this.inScope("trash").length,
+    };
+  }
+
+  /** Records in the current scope matching the search query and tag filter. */
   get visible(): Bookmark[] {
-    const q = this.query.trim().toLowerCase();
+    const parsed = parseQuery(this.query);
+    const empty = isEmptyQuery(parsed);
     const tag = this.selectedTag;
 
-    return liveBookmarks(this.file)
-      .filter((b) => (this.showArchived ? true : !b.archived))
+    return this.inScope()
       .filter((b) => (tag ? b.tags.some((t) => tagMatches(t, tag)) : true))
-      .filter((b) => {
-        if (!q) return true;
-        return (
-          b.title.toLowerCase().includes(q) ||
-          b.url.toLowerCase().includes(q) ||
-          b.description.toLowerCase().includes(q) ||
-          b.tags.some((t) => t.includes(q))
-        );
-      })
+      .filter((b) => (empty ? true : matchesQuery(b, parsed)))
       .sort(comparator(this.sortKey, this.sortDir));
   }
 
@@ -162,7 +222,7 @@ export class AppStore {
   /** Every tag in use, with its descendant-inclusive count (§3.3.2). */
   get tagCounts(): Map<string, { exact: number; total: number }> {
     const counts = new Map<string, { exact: number; total: number }>();
-    const live = liveBookmarks(this.file).filter((b) => this.showArchived || !b.archived);
+    const live = this.inScope();
 
     for (const b of live) {
       for (const tag of b.tags) {
@@ -616,15 +676,183 @@ export class AppStore {
 
   /** Delete writes a tombstone; the record is retained so the deletion survives a merge. */
   deleteBookmark(id: string): void {
+    const title = this.file.bookmarks.find((b) => b.id === id)?.title ?? "bookmark";
+    this.remember(`Deleted ${title}`);
+    this.tombstone([id]);
+  }
+
+  // --------------------------------------------------------------- undo (7j)
+
+  /**
+   * Snapshot the current records under a label, making the next mutation undoable.
+   *
+   * Keeping the whole array is not the extravagance it looks like: every mutation already
+   * replaces `bookmarks` with a new array of mostly-shared records, so a snapshot is one
+   * reference plus the objects that were about to be replaced anyway. A per-record diff would
+   * be more code for less safety — this restores exactly what was there, including the case
+   * where an action touched more records than it meant to.
+   */
+  private remember(label: string): void {
+    this.undoable = { label, bookmarks: this.file.bookmarks, at: Date.now() };
+    if (this.undoTimer) clearTimeout(this.undoTimer);
+    this.undoTimer = setTimeout(() => (this.undoable = null), UNDO_WINDOW_MS);
+  }
+
+  /** Put the remembered records back, and commit that as its own change. */
+  undo(): void {
+    const action = this.undoable;
+    if (!action) return;
+    this.dismissUndo();
+
+    this.file = {
+      ...this.file,
+      updatedAt: new Date().toISOString(),
+      bookmarks: action.bookmarks,
+    };
+    this.clearSelection();
+    this.scheduleFlush();
+  }
+
+  /** Dismiss the offer without acting on it. */
+  dismissUndo(): void {
+    this.undoable = null;
+    if (this.undoTimer) {
+      clearTimeout(this.undoTimer);
+      this.undoTimer = null;
+    }
+  }
+
+  // ---------------------------------------------------------- selection (7k)
+
+  /** Is this record part of the current selection? */
+  isSelected(id: string): boolean {
+    return this.selection.includes(id);
+  }
+
+  toggleSelected(id: string): void {
+    this.selection = this.isSelected(id)
+      ? this.selection.filter((s) => s !== id)
+      : [...this.selection, id];
+  }
+
+  /** Select everything the current filter matches — including pages not on screen. */
+  selectAllMatching(): void {
+    this.selection = this.visible.map((b) => b.id);
+  }
+
+  /** Toggle the current page: finish a partial selection, or clear a complete one. */
+  selectPage(): void {
+    const page = this.pageItems.map((b) => b.id);
+    const missing = page.filter((id) => !this.isSelected(id));
+    this.selection =
+      missing.length > 0
+        ? [...this.selection, ...missing]
+        : this.selection.filter((id) => !page.includes(id));
+  }
+
+  clearSelection(): void {
+    this.selection = [];
+  }
+
+  /**
+   * Records that are both selected and still visible.
+   *
+   * Selection survives paging, which is the point — retagging 300 imported bookmarks should
+   * not mean six rounds of fifty. But it must never act on something the filter has since
+   * hidden, so every bulk operation goes through this rather than through `selection`.
+   */
+  get selectedVisible(): Bookmark[] {
+    const chosen = new Set(this.selection);
+    return this.visible.filter((b) => chosen.has(b.id));
+  }
+
+  // --------------------------------------------------------- bulk edits (7k)
+
+  /** Write a tombstone on each id. Shared by single delete and bulk delete. */
+  private tombstone(ids: string[]): void {
     const now = new Date().toISOString();
+    const target = new Set(ids);
     this.file = {
       ...this.file,
       updatedAt: now,
       bookmarks: this.file.bookmarks.map((b) =>
-        b.id === id ? { ...b, deletedAt: now, updatedAt: now } : b,
+        target.has(b.id) ? { ...b, deletedAt: now, updatedAt: now } : b,
       ),
     };
     this.scheduleFlush();
+  }
+
+  /** Apply a patch to many records at once, under a single undo entry. */
+  private patchMany(
+    ids: string[],
+    label: string,
+    patch: (b: Bookmark) => Partial<Bookmark>,
+  ): void {
+    if (ids.length === 0) return;
+    const now = new Date().toISOString();
+    const target = new Set(ids);
+    this.remember(label);
+
+    this.file = {
+      ...this.file,
+      updatedAt: now,
+      bookmarks: this.file.bookmarks.map((b) =>
+        target.has(b.id) ? { ...b, ...patch(b), updatedAt: now } : b,
+      ),
+    };
+    this.scheduleFlush();
+  }
+
+  private static plural(count: number): string {
+    return count === 1 ? "1 bookmark" : `${count} bookmarks`;
+  }
+
+  /** Add tags to every named record, keeping the tags each already had. */
+  addTags(ids: string[], tags: string[]): void {
+    const incoming = normalizeTags(tags);
+    if (incoming.length === 0) return;
+    this.patchMany(ids, `Tagged ${AppStore.plural(ids.length)}`, (b) => ({
+      tags: normalizeTags([...b.tags, ...incoming]),
+    }));
+  }
+
+  /** Remove tags — and their descendants, matching how the sidebar filters (§3.3.2). */
+  removeTags(ids: string[], tags: string[]): void {
+    const outgoing = normalizeTags(tags);
+    if (outgoing.length === 0) return;
+    this.patchMany(ids, `Untagged ${AppStore.plural(ids.length)}`, (b) => ({
+      tags: b.tags.filter((t) => !outgoing.some((rm) => tagMatches(t, rm))),
+    }));
+  }
+
+  setArchived(ids: string[], archived: boolean): void {
+    const verb = archived ? "Archived" : "Unarchived";
+    this.patchMany(ids, `${verb} ${AppStore.plural(ids.length)}`, () => ({ archived }));
+  }
+
+  setPinned(ids: string[], pinned: boolean): void {
+    const verb = pinned ? "Pinned" : "Unpinned";
+    this.patchMany(ids, `${verb} ${AppStore.plural(ids.length)}`, () => ({ pinned }));
+  }
+
+  /** Bulk delete. One undo entry covers the whole set. */
+  deleteMany(ids: string[]): void {
+    if (ids.length === 0) return;
+    this.remember(`Deleted ${AppStore.plural(ids.length)}`);
+    this.tombstone(ids);
+    this.clearSelection();
+  }
+
+  /**
+   * Bring records back from the trash (task 7i).
+   *
+   * Clearing `deletedAt` is the whole operation — the record was never removed, only marked.
+   * `updatedAt` moves to now so the restore wins the last-write-wins merge against a device
+   * that still believes the record is deleted (§3.2).
+   */
+  restoreMany(ids: string[]): void {
+    this.patchMany(ids, `Restored ${AppStore.plural(ids.length)}`, () => ({ deletedAt: null }));
+    this.clearSelection();
   }
 
   // ------------------------------------------------------------------ import
@@ -852,6 +1080,16 @@ export class AppStore {
     this.wantsSetup = true;
     this.locked = false;
     this.tokenExpired = false;
+    // View state outlives the collection it described unless it is cleared here: selected ids
+    // pointing at records that no longer exist, an edit form open on one of them, and an undo
+    // offer that would write the old collection back over the new one.
+    this.clearSelection();
+    this.dismissUndo();
+    this.editingId = null;
+    this.scope = "active";
+    this.query = "";
+    this.selectedTag = null;
+    this.page = 0;
     this.dirty = false;
     this.pendingCount = 0;
     for (const off of this.teardown) off();

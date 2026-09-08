@@ -13,6 +13,7 @@
    */
   import type { Bookmark } from "../schema/types";
   import { isSafeUrl } from "../schema/normalize";
+  import TagVocabulary from "./TagVocabulary.svelte";
 
   interface Props {
     bookmark: Bookmark;
@@ -93,10 +94,12 @@
     <span class="text-[var(--color-ink-soft)]">Tags <em>(comma separated)</em></span>
     <input
       bind:value={draftTags}
+      list="bm-tags-edit"
       class={field}
       placeholder="dev/rust, reading-list"
       autocomplete="off"
     />
+    <TagVocabulary id="bm-tags-edit" />
   </label>
 
   {#if problem}

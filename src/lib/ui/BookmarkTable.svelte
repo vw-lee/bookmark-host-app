@@ -17,18 +17,21 @@
   import BookmarkEditForm from "./BookmarkEditForm.svelte";
   import BookmarkActions from "./BookmarkActions.svelte";
   import DomainTile from "./DomainTile.svelte";
+  import SelectBox from "./SelectBox.svelte";
 
   interface Props {
     items: Bookmark[];
     onTag: (tag: string) => void;
     onDelete: (id: string) => void;
     onUpdate: (id: string, patch: Partial<Bookmark>) => void;
+    /** Where the keyboard cursor is on this page, or -1 (task 7m). */
+    focusedIndex?: number;
   }
 
-  const { items, onTag, onDelete, onUpdate }: Props = $props();
+  const { items, onTag, onDelete, onUpdate, focusedIndex = -1 }: Props = $props();
 
-  /** Only one row edits at a time — a table full of open forms is unreadable. */
-  let editingId = $state<string | null>(null);
+  // Which row is being edited. This moved to the store (task 7m) so the `e` shortcut can open
+  // one, and so the "only one form at a time" rule this view already had holds everywhere.
 
   const columns: { key: SortKey; className: string }[] = [
     { key: "title", className: "" },
@@ -98,10 +101,17 @@
     </thead>
 
     <tbody>
-      {#each items as bookmark (bookmark.id)}
-        <tr class="border-b border-[var(--color-border)] {bookmark.archived ? 'opacity-60' : ''}">
+      {#each items as bookmark, i (bookmark.id)}
+        <tr
+          data-bm-index={i}
+          class="border-b border-[var(--color-border)] {bookmark.archived ? 'opacity-60' : ''}
+                 {i === focusedIndex
+            ? 'bg-[var(--color-surface-raised)] ring-2 ring-[var(--color-accent)] ring-inset'
+            : ''}"
+        >
           <td class={cell}>
             <div class="flex items-start gap-2">
+              <SelectBox {bookmark} />
               <DomainTile url={bookmark.url} size="h-6 w-6 text-[0.6rem]" />
               <div class="min-w-0">
                 {#if isSafeUrl(bookmark.url)}
@@ -163,16 +173,16 @@
               {onDelete}
               {onUpdate}
               compact
-              onEdit={() => (editingId = bookmark.id)}
+              onEdit={() => (store.editingId = bookmark.id)}
             />
           </td>
         </tr>
 
-        {#if editingId === bookmark.id}
+        {#if store.editingId === bookmark.id}
           <!-- The table's version of "expands full width": one spanning row beneath its own. -->
           <tr class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)]">
             <td class="px-3 py-3" colspan="6">
-              <BookmarkEditForm {bookmark} {onUpdate} onClose={() => (editingId = null)} />
+              <BookmarkEditForm {bookmark} {onUpdate} onClose={() => (store.editingId = null)} />
             </td>
           </tr>
         {/if}

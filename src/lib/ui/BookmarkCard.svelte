@@ -15,17 +15,22 @@
   import BookmarkEditForm from "./BookmarkEditForm.svelte";
   import BookmarkActions from "./BookmarkActions.svelte";
   import DomainTile from "./DomainTile.svelte";
+  import SelectBox from "./SelectBox.svelte";
+  import { store } from "../store.svelte";
 
   interface Props {
     bookmark: Bookmark;
     onTag: (tag: string) => void;
     onDelete: (id: string) => void;
     onUpdate: (id: string, patch: Partial<Bookmark>) => void;
+    /** Position on the current page, so the keyboard cursor can find this row (task 7m). */
+    index?: number;
+    focused?: boolean;
   }
 
-  const { bookmark, onTag, onDelete, onUpdate }: Props = $props();
+  const { bookmark, onTag, onDelete, onUpdate, index, focused = false }: Props = $props();
 
-  let editing = $state(false);
+  const editing = $derived(store.editingId === bookmark.id);
 
   const safe = $derived(isSafeUrl(bookmark.url));
   const host = $derived(hostOf(bookmark.url));
@@ -33,13 +38,16 @@
 
 <article
   role="listitem"
+  data-bm-index={index}
   class="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-3
-         {bookmark.archived ? 'opacity-60' : ''} {editing ? 'col-span-full' : ''}"
+         {bookmark.archived ? 'opacity-60' : ''} {editing ? 'col-span-full' : ''}
+         {focused ? 'ring-2 ring-[var(--color-accent)]' : ''}"
 >
   {#if editing}
-    <BookmarkEditForm {bookmark} {onUpdate} onClose={() => (editing = false)} />
+    <BookmarkEditForm {bookmark} {onUpdate} onClose={() => (store.editingId = null)} />
   {:else}
     <div class="flex items-start gap-2">
+      <SelectBox {bookmark} />
       <DomainTile url={bookmark.url} />
       <div class="min-w-0 flex-1">
         {#if safe}
@@ -92,7 +100,7 @@
 
     <!-- mt-auto pins the actions to the bottom so they line up across a row of uneven cards. -->
     <div class="mt-auto pt-3">
-      <BookmarkActions {bookmark} {onDelete} {onUpdate} onEdit={() => (editing = true)} />
+      <BookmarkActions {bookmark} {onDelete} {onUpdate} onEdit={() => (store.editingId = bookmark.id)} />
     </div>
   {/if}
 </article>
