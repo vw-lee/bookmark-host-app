@@ -13,7 +13,7 @@
 
 {#if store.pageCount > 1}
   <nav
-    class="flex items-center justify-between gap-3 border-t border-[var(--color-border)] px-4 py-3 text-sm"
+    class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm"
     aria-label="Pagination"
   >
     <span class="text-[var(--color-ink-soft)]">{from}–{to} of {total}</span>

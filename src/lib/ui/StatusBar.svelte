@@ -27,26 +27,26 @@
 </script>
 
 {#if store.offline}
-  <p role="status" aria-live="polite" class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+  <p role="status" aria-live="polite" class="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
     Offline. {store.pendingCount > 0
       ? `${store.pendingCount} change${store.pendingCount === 1 ? "" : "s"} saved here and waiting to sync.`
       : "Changes are saved here and will sync when you reconnect."}
   </p>
 {:else if store.parkedUntil !== null && parkedSeconds > 0}
-  <p role="status" aria-live="polite" class="border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+  <p role="status" aria-live="polite" class="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
     GitHub rate limit reached. Syncing resumes in {parkedSeconds}s — nothing is lost.
   </p>
 {/if}
 
 {#if atRisk}
-  <p class="border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
+  <p class="shrink-0 border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
     This browser has not granted persistent storage, so queued changes could be cleared if the
     device runs low on space. Installing the app usually grants it.
   </p>
 {/if}
 
 {#if store.size.level !== "ok"}
-  <p class="border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
+  <p class="shrink-0 border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
     Your bookmarks file is {formatBytes(store.size.bytes)}.
     {#if store.size.level === "critical"}
       It has passed the 1 MB limit the GitHub Contents API can return, so the app must be

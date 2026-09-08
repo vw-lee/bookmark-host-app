@@ -27,9 +27,18 @@
   );
 </script>
 
-<nav class="w-56 shrink-0 border-r border-[var(--color-border)] p-3 text-sm">
+<!--
+  The sidebar scrolls on its own (D18), and "All" is pinned above that scroll rather than
+  riding it. A deep tag tree can run to hundreds of nodes, and "show me everything again" is
+  the one control you reach for after scrolling far enough to lose sight of it.
+
+  Narrower on small screens: at w-56 a phone gives up most of its width to tags.
+-->
+<nav
+  class="flex w-44 shrink-0 flex-col border-r border-[var(--color-border)] p-3 text-sm sm:w-56"
+>
   <button
-    class="w-full rounded px-2 py-1 text-left {selected === null
+    class="w-full shrink-0 rounded px-2 py-1 text-left {selected === null
       ? 'bg-[var(--color-surface-raised)] font-medium'
       : ''}"
     onclick={() => onSelect(null)}
@@ -43,11 +52,11 @@
     </p>
   {/if}
 
-  <ul class="mt-1">
+  <ul class="bm-scroll mt-1 min-h-0 flex-1">
     {#each nodes as node (node.tag)}
       <li>
         <button
-          class="w-full rounded px-2 py-1 text-left {selected === node.tag
+          class="w-full truncate rounded px-2 py-1 text-left {selected === node.tag
             ? 'bg-[var(--color-surface-raised)] font-medium'
             : ''}"
           style="padding-left: {0.5 + node.depth * 0.75}rem"

@@ -33,7 +33,7 @@
 
 {#if show}
   <aside
-    class="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm"
+    class="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm"
   >
     {#if ios}
       <span>

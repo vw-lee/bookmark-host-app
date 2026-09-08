@@ -40,6 +40,25 @@ body {
 }
 
 /*
+ * Scroll regions (D18).
+ *
+ * The app is one viewport tall and never scrolls as a whole; the tag sidebar and the bookmark
+ * list scroll independently inside it. Three properties, each earning its place:
+ *
+ *   overflow-y: auto        — scroll only when there is something to scroll.
+ *   overscroll-behavior     — reaching the end of the tag list must not start scrolling
+ *                             something else, which on mobile is how a pull-to-refresh fires
+ *                             by accident and throws away the view you had.
+ *   scrollbar-gutter: stable— reserve the track always, so a filter that shortens the list
+ *                             does not shift every row sideways as the scrollbar vanishes.
+ */
+.bm-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/*
  * Explicit theme selection (task 7b). `data-theme` on <html> overrides the system preference.
  */
 :root[data-theme="light"] {

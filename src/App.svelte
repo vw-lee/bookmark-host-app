@@ -136,6 +136,15 @@
   // the whole PAT flow — the exact cost this app is trying to charge only once.
   const canLock = $derived(store.connected && hasWrappedToken());
 
+  /**
+   * Is the bookmark UI on screen, rather than one of the full-page forms? (D18)
+   *
+   * Only the bookmark UI is pinned to the viewport. Setup and Unlock are documents taller than
+   * a phone screen, and trapping them in a non-scrolling box would put their Connect button
+   * somewhere unreachable.
+   */
+  const appShell = $derived(!store.booting && !store.locked && !store.needsSetup);
+
   const total = $derived(liveBookmarks(store.file).filter((b) => !b.archived).length);
   const errorMessage = $derived(
     store.error instanceof GitHubError ? store.error.message : (store.error?.message ?? null),
@@ -145,16 +154,30 @@
 <svelte:window onkeydown={onKeydown} />
 <svelte:document onvisibilitychange={onVisibilityChange} />
 
-<ErrorBanner />
+<!--
+  Two page shapes (D18).
 
-{#if store.booting}
-  <p class="p-8 text-sm text-[var(--color-ink-soft)]">Starting…</p>
-{:else if store.locked}
-  <Unlock />
-{:else if store.needsSetup}
-  <Setup />
-{:else}
-  <div class="flex min-h-dvh flex-col">
+  The app view is an APPLICATION SHELL: exactly one viewport tall, never scrolling as a whole,
+  with the tag sidebar and the bookmark list each scrolling independently. Chrome — header,
+  banners, pager — stays put, so the search box and the paging controls are always reachable
+  without scrolling back to find them.
+
+  Setup and Unlock are DOCUMENTS: long, read top-to-bottom, and they must scroll normally. So
+  the wrapper only becomes a fixed-height flex column when the app view is on screen; the
+  document branches keep a plain block box, where their own `mx-auto max-w-2xl` centring
+  behaves exactly as it did before.
+-->
+<div class={appShell ? "flex h-dvh flex-col overflow-hidden" : ""}>
+  <ErrorBanner />
+
+  {#if store.booting}
+    <p class="p-8 text-sm text-[var(--color-ink-soft)]">Starting…</p>
+  {:else if store.locked}
+    <Unlock />
+  {:else if store.needsSetup}
+    <Setup />
+  {:else}
+    <div class="flex min-h-0 flex-1 flex-col">
     <!-- Task 7d: first tab stop jumps past the header controls to the list. -->
     <a
       href="#bookmark-list"
@@ -163,13 +186,20 @@
       Skip to bookmarks
     </a>
 
-    <header class="flex items-center gap-3 border-b border-[var(--color-border)] px-4 py-3">
+    <!--
+      Wrapping, not squeezing (D18). In a fixed shell there is no page scroll to push overflow
+      into, so a narrow window would otherwise crush the search box to a few pixels or clip the
+      controls off the right edge. The header takes a second row instead.
+    -->
+    <header
+      class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--color-border)] px-4 py-3"
+    >
       <h1 class="font-semibold">Bookmarks</h1>
 
       <input
         bind:this={searchInput}
         bind:value={store.query}
-        class="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-1.5 text-sm"
+        class="min-w-48 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-1.5 text-sm"
         placeholder="Search title, URL, description, tags…  (press /)"
         aria-label="Search bookmarks"
       />
@@ -236,7 +266,7 @@
     />
 
     {#if sharedNotice}
-      <p class="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+      <p class="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
         {sharedNotice}
         <button class="underline" onclick={() => (sharedNotice = null)}>dismiss</button>
       </p>
@@ -245,7 +275,7 @@
     <StatusBar />
 
     {#if !store.connected}
-      <p class="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+      <p class="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
         {#if store.offline}
           <!-- Offline is a state to wait out, not a setup to redo — no token is needed here. -->
           Offline — showing the copy saved on this device. Changes sync when the connection
@@ -258,7 +288,7 @@
     {/if}
 
     {#if errorMessage}
-      <p class="border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
+      <p class="shrink-0 border-b border-[var(--color-danger)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm text-[var(--color-danger)]">
         {errorMessage}
       </p>
     {/if}
@@ -266,7 +296,9 @@
     {#if store.status === "loading"}
       <p class="p-8 text-sm text-[var(--color-ink-soft)]">Loading your bookmarks…</p>
     {:else}
-      <div class="flex flex-1">
+      <!-- min-h-0 is load-bearing: without it a flex child refuses to shrink below its content,
+           the row grows past the viewport, and neither scroll region below ever scrolls. -->
+      <div class="flex min-h-0 flex-1">
         <TagTree
           counts={store.tagCounts}
           selected={store.selectedTag}
@@ -274,7 +306,13 @@
           onSelect={(tag) => (store.selectedTag = tag)}
         />
 
-        <main class="flex-1" id="bookmark-list" aria-label="Bookmarks">
+        <main class="flex min-h-0 flex-1 flex-col" aria-label="Bookmarks">
+          <!--
+            The scroll region is what the skip link targets, and tabindex="-1" is what lets it
+            receive that focus. It also earns the keyboard its arrow-key scrolling: a scrollable
+            box that cannot be focused cannot be scrolled without a mouse.
+          -->
+          <div id="bookmark-list" tabindex="-1" class="bm-scroll min-h-0 flex-1">
           {#if store.visible.length === 0}
             <p class="p-8 text-sm text-[var(--color-ink-soft)]">
               {#if total === 0}
@@ -335,12 +373,17 @@
               />
             {/each}
           {/if}
+          </div>
+
+          <!-- Outside the scroll region: paging controls you have to scroll to reach are the
+               reason people think a list has ended. -->
           <Pager />
         </main>
       </div>
     {/if}
-  </div>
-{/if}
+    </div>
+  {/if}
+</div>
 
 {#if adding}
   <QuickAdd onClose={() => (adding = false)} />

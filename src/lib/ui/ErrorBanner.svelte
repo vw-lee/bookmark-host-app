@@ -5,7 +5,7 @@
 
 {#if errorLog.entries.length > 0}
   <div
-    class="border-b-2 border-[var(--color-danger)] bg-[var(--color-surface-raised)]"
+    class="shrink-0 border-b-2 border-[var(--color-danger)] bg-[var(--color-surface-raised)]"
     role="alert"
     aria-live="assertive"
   >
