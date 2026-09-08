@@ -234,3 +234,43 @@ describe("search operators reach the store (task 7h)", () => {
     expect(titles()).toEqual(["B"]);
   });
 });
+
+describe("batch tag rename reaches the store (task 7p)", () => {
+  it("applies every rule as one change, and one undo entry", () => {
+    const affected = store.renameTagsBatch([
+      { from: "dev/rust", to: "languages/rust" },
+      { from: "dev/go", to: "languages/go" },
+    ]);
+
+    expect(affected).toBe(2);
+    expect(store.file.bookmarks.find((b) => b.title === "A")!.tags).toEqual(["languages/rust"]);
+    expect(store.file.bookmarks.find((b) => b.title === "B")!.tags).toEqual(["languages/go"]);
+
+    // One entry, not two: the batch is a single action the user took.
+    expect(store.undoable?.label).toContain("2 tags");
+    store.undo();
+    expect(store.file.bookmarks.find((b) => b.title === "A")!.tags).toEqual(["dev/rust"]);
+    expect(store.file.bookmarks.find((b) => b.title === "B")!.tags).toEqual(["dev/go"]);
+  });
+
+  it("takes no undo entry when nothing matched", () => {
+    // An undo offer for a change that never happened would send the user back past the last
+    // thing they actually did.
+    expect(store.renameTagsBatch([{ from: "nosuchtag", to: "whatever" }])).toBe(0);
+    expect(store.undoable).toBeNull();
+  });
+
+  it("clears a sidebar filter whose tag the batch moved", () => {
+    // A filter on a tag that no longer exists shows an empty list with no explanation.
+    store.selectedTag = "dev/rust";
+    store.renameTagsBatch([{ from: "dev", to: "engineering" }]);
+    expect(store.selectedTag).toBeNull();
+  });
+
+  it("leaves an unrelated filter alone", () => {
+    store.addBookmark({ url: "https://d.example/4", title: "D", tags: ["reading"] });
+    store.selectedTag = "reading";
+    store.renameTagsBatch([{ from: "dev", to: "engineering" }]);
+    expect(store.selectedTag).toBe("reading");
+  });
+});

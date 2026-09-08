@@ -107,6 +107,9 @@ before the phase that depends on them begins.
 | D20 | Selection scope | **BUILT — selection survives paging; every bulk action reads `selectedVisible`** | The operation this exists for is retagging 300 bookmarks straight after an import, so stopping at the page boundary would have meant six rounds of fifty and defeated the point. The safety rule is the complement: a selection made before a filter changed must never act on records the user can no longer see, so operations take the intersection of selected and visible rather than the raw id list. |
 | D21 | Query syntax | **BUILT — `tag:`, `site:`, `is:`, quoted phrases, `-` to negate. AND only** | Substring-across-four-fields could not express "rust AND book", and a single `selectedTag` could not express two tags at once. OR is deliberately absent: it doubles the syntax to serve a query nobody asked for, and `tag:parent` already covers the common "any of these" case through the hierarchy. Anything that looks like an operator but is not one falls back to a plain word — silently matching nothing would read as missing data. |
 | D22 | Help surface | **BUILT — `?` opens a shortcut list, no longer the command palette** | The palette answers "what can I do" and could never answer "how do I do it without a mouse" — a fuzzy-matched command list has nowhere to put "j moves down". The search syntax is documented in the same overlay, because an operator nobody can discover is an operator nobody uses, and this is where people already come looking for how to drive the app. |
+| D23 | Sync legibility | **BUILT — one glyph and one word, ranked by a pure function, with the detail behind a click** | The header held a chain of `{#if}` in the markup that could name four states and silently rendered *nothing* for three more: an expired token, a file past the 1 MB ceiling, and a collection that had never connected. Blank space where a status belongs reads as "fine", and the worst of those three means every edit is local-only. The ranking now lives in `syncStatus.ts` as a pure function over a snapshot, so all ten states are enumerable and testable without mounting the app. Colour is reinforcement, never the signal — see §14.2. |
+| D24 | Batch tag rename | **BUILT — a table of rules, applied in one pass, longest match wins, undoable** | Tag drift arrives all at once (a browser import lands `readinglist`, `reading list` and `Reading List` as three branches), so the fix has to arrive all at once too — the single rename meant a dozen previews, a dozen applies, and a dozen commits. The load-bearing rule is that rules are never chained: with `dev → engineering` and `engineering → eng` present, a sequential batch would turn `dev` into `eng`, an outcome no preview could honestly show because it depends on row order. One pass with the most specific source winning makes row order irrelevant and the previewed counts exact. |
+| D25 | Paging keys | **BUILT — Page Up/Down turn pages, Home/End jump to first/last** | They override the browser's scroll-by-a-screenful, which they can afford to: the list already lives in a fixed-height region (D18) sized so a page is roughly a screenful, so the default was scrolling a box with little left to scroll. Turning the page is what the key was reaching for. The restraint is in the two guards — they never fire inside a text field, and they never drag the keyboard cursor into a list the user was only paging with the mouse, which would silently arm `Delete` and `e` against a row they never chose. |
 
 ---
 
@@ -611,10 +614,10 @@ been saved, when the value is obvious.
 
 | Area | State |
 |------|-------|
-| Tests | 325 passing across 24 files |
-| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, palette ranking, offline/rate-limit/refresh/pagination, domain tiles, sort comparator, view modes, per-view render of the §5.4 unsafe-URL gate |
-| Bundle | ~212 KB raw / ~64 KB gzipped |
-| Source | ~10,200 lines; largest file 865 (limit 2,000) |
+| Tests | 419 passing across 29 files |
+| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, batch tag rename, palette ranking, sync-status ranking, offline/rate-limit/refresh/pagination, keyboard navigation and paging, domain tiles, sort comparator, view modes, per-view render of the §5.4 unsafe-URL gate |
+| Bundle | ~245 KB raw / ~73 KB gzipped |
+| Source | ~13,700 lines; largest file 1,142 (limit 2,000) |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
 
 Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before committing.
@@ -631,6 +634,10 @@ Honest limits, so nothing here reads as a stronger claim than it is:
   and checking what it renders — including, per mode, that an unsafe URL never becomes an
   anchor. What no test covers is whether the grid *looks* right: column widths, card heights and
   the tile palette have not been viewed in a browser.
+* **7n and 7p on a real screen.** The status badge, its details panel and the batch rename
+  table are asserted through their pure logic and through mounted-component tests. Nothing has
+  confirmed how the badge tones read against the three themes, or how the rename table wraps on
+  a phone.
 * **Deployment.** The Pages workflow is written and the build is verified locally, but Pages
   has not been enabled and nothing has been pushed.
 * **The Phase 6 workflows** run correctly against live sites locally; they have not run inside
@@ -792,6 +799,19 @@ and the `scripts/` directory across. The app repo keeps them only as the canonic
   persistence state (§6.3), theme.
 * [x] **7g.** View modes — list, cards, tiles and table, with generated domain tiles (D17),
   sortable table columns, and a per-mode page size. Full model in §14.1.
+* [x] **7h.** Search operators — `tag:`, `site:`, `is:`, quoted phrases, `-` to negate (D21).
+* [x] **7i.** Three scopes — active, archived and trash, with restore (D19).
+* [x] **7j.** Undo on every destructive action, snapshot-based (D19).
+* [x] **7k.** Selection and bulk edits, surviving paging (D20).
+* [x] **7l.** Tag vocabulary autocomplete on every tag field.
+* [x] **7m.** Keyboard navigation (`j`/`k`, `Enter`, `e`, `x`, `Delete`) and the `?` shortcut
+  list that replaced the palette as the help surface (D22).
+* [x] **7n.** Sync status — tick / wait / cross with a colour tone, plus a details panel giving
+  last sync, queue depth, connection, storage persistence and file size (D23). Model in §14.2.
+* [x] **7o.** Paging shortcuts — Page Up / Page Down turn the page, Home / End jump to the
+  first and last (D25). Named on the pager controls, not only in the `?` dialog.
+* [x] **7p.** Batch tag rename — a table of from → to rules, previewed together and applied as
+  one undoable change (D24). Model in §14.3.
 
 ### 14.1 View Modes (7g)
 
@@ -852,6 +872,68 @@ signalled by colour alone.
 
 Actions are always visible rather than revealed on hover, in every mode. §1.2 forbids
 hover-dependent affordances, and the same rule is what makes the grid work on a touchscreen.
+
+### 14.2 Sync Status (7n, D23)
+
+Every state the sync loop can be in maps to exactly one of three glyphs, ranked by a pure
+function in `syncStatus.ts`:
+
+| Glyph | Tone | States |
+|-------|------|--------|
+| ✓ tick | green | `synced`, `idle` — nothing outstanding |
+| ⋯ wait | blue | `syncing`, `queued` — work in flight or debouncing |
+| ⋯ wait | amber | `parked` — held on a GitHub rate limit, with a live countdown |
+| ✕ cross | amber | `offline`, `local` — not syncing, but self-resolving or a setup choice |
+| ✕ cross | red | `expired`, `full`, `error` — stopped until the user acts |
+
+**The glyph carries the meaning; the tone reinforces it.** §1.2 forbids colour-only
+signalling, and under `[data-eink]` every tone flattens to black — so a status that read as
+"green versus red" would read as "black versus black" on the panel it was written for. The
+glyph, the label and the summary sentence all survive that flattening unchanged.
+
+**Ranking is by what needs the user to know, not by what changed last.** An expired token
+outranks everything it coincides with, because nothing syncs until a new one is pasted. A
+file past the 1 MB ceiling (§4.3) outranks offline, because reconnecting will not fix it.
+
+**Red is reserved for states only the user can clear.** Offline and a rate-limit park are
+amber: they are conditions to wait out, and a red cross every time someone goes through a
+tunnel trains them to ignore the indicator by the time it means something.
+
+The badge opens a panel carrying what the header has no room for — last sync as a coarse
+relative time, queue depth, connection, storage persistence (§6.3) and file size — plus a
+**Sync now** button. Nothing is behind a hover, per §1.2.
+
+The **not connected** banner is styled to match its cost rather than its frequency: a thick
+coloured edge, the same cross glyph, a bold line naming the consequence, and Reconnect as a
+filled button. It previously had the same weight as a dismissible notice, while meaning that
+every edit made under it lived on one device only.
+
+### 14.3 Batch Tag Rename (7p, D24)
+
+A table of `from → to` rows in Bulk tools, previewed together and applied as one undoable
+change. Three rules define the semantics, and the first is the one everything else rests on:
+
+1. **One pass, never chained.** Every tag is matched against the original rules exactly once
+   and never re-examined. Sequential application would let `dev → engineering` and
+   `engineering → eng` combine into `dev → eng`, which depends on row order and which no
+   preview could honestly show.
+2. **Longest match wins.** Where `dev` and `dev/rust` both match the tag `dev/rust`, the more
+   specific rule applies — the only reading under which writing a specific row means anything.
+   Row order is therefore irrelevant to the result.
+3. **Every rename carries its subtree**, exactly as the single rename does (§3.3.2): renaming
+   `dev` moves `dev/rust` with it.
+
+The preview is honest about what will *not* happen. A row is marked `already that tag` when
+both sides normalise identically, `an earlier row renames this` when two rows claim the same
+source (the first wins), and `no tags match` when a complete row hits nothing — which is
+almost always a typo, and which would otherwise be a silent no-op the user reads as success.
+Converging renames that merge two spellings into one are flagged rather than blocked: merging
+is usually the whole point of opening the panel.
+
+Unlike the single rename beside it, the batch takes an undo entry. That asymmetry is
+deliberate — one rename is a decision a person can hold in their head and reverse by hand; a
+dozen rules over hundreds of records needs a better answer than editing them back one at a
+time.
 
 ---
 

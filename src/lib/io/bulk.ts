@@ -179,3 +179,224 @@ export function applyDeleteTag(bookmarks: Bookmark[], tag: string, now: string):
     return { ...b, tags: b.tags.filter((t) => !tagMatches(t, source)), updatedAt: now };
   });
 }
+
+// ------------------------------------------------------- batch rename (7p)
+
+/** One row of the batch rename table. Raw user text; normalisation happens in the plan. */
+export interface RenameRule {
+  from: string;
+  to: string;
+}
+
+/** Why a row will do nothing, or null if it will. */
+export type RuleProblem = "empty" | "same" | "duplicate" | "no-match";
+
+export interface BatchRenameRow {
+  /** Index into the rules array, so the UI can line a row up with its input. */
+  index: number;
+  /** Canonical source and target, or "" when the row is still blank. */
+  source: string;
+  target: string;
+  /** How many bookmarks this row alone rewrites. */
+  affected: number;
+  /** Sample of the tag-level changes it makes. */
+  examples: { from: string; to: string }[];
+  /** Canonical tags this row merges into something that already exists. */
+  collisions: string[];
+  problem: RuleProblem | null;
+}
+
+export interface BatchRenamePlan {
+  rows: BatchRenameRow[];
+  /** Distinct bookmarks touched by the batch as a whole — not the sum of the rows. */
+  affected: number;
+  /** How many rows will actually do something. */
+  applicable: number;
+}
+
+interface CompiledRule {
+  index: number;
+  source: string;
+  target: string;
+}
+
+/**
+ * Validate the rows and drop the ones that cannot act.
+ *
+ * A blank row is not an error — the table always carries one for typing into — so it is
+ * reported as a problem the UI can render as "nothing yet" rather than as a failure.
+ */
+function compileRules(rules: RenameRule[]): {
+  compiled: CompiledRule[];
+  problems: (RuleProblem | null)[];
+} {
+  const compiled: CompiledRule[] = [];
+  const problems: (RuleProblem | null)[] = [];
+  const claimed = new Set<string>();
+
+  rules.forEach((rule, index) => {
+    const source = normalizeTag(rule.from);
+    const target = normalizeTag(rule.to);
+
+    if (!source || !target) {
+      problems[index] = "empty";
+    } else if (source === target) {
+      // Usually a canonicalisation the user did not realise had already happened:
+      // "Reading List" and "reading-list" normalise to the same tag.
+      problems[index] = "same";
+    } else if (claimed.has(source)) {
+      // Two rows renaming the same tag to different things has no defensible answer, so the
+      // first row wins and the second is called out rather than silently losing.
+      problems[index] = "duplicate";
+    } else {
+      claimed.add(source);
+      problems[index] = null;
+      compiled.push({ index, source, target });
+    }
+  });
+
+  return { compiled, problems };
+}
+
+/**
+ * Rewrite one tag under the whole rule set, or return null if no rule touches it.
+ *
+ * ## The rule that makes a batch safe: one pass, longest match wins
+ *
+ * Applying renames one after another chains them. With `dev` to `engineering` and
+ * `engineering` to `eng`, a sequential batch turns `dev` into `eng` — an outcome nobody asked
+ * for and no preview could honestly show, because it depends on the order of two rows the
+ * user thinks of as independent.
+ *
+ * So every tag is matched against the ORIGINAL rules exactly once, and never re-examined.
+ * Where several rules match — `dev` and `dev/rust` both match the tag `dev/rust` — the most
+ * specific source wins, which is the only reading under which writing a more specific row
+ * means anything at all. Row order is then irrelevant, and the preview is exact.
+ */
+function rewriteTag(
+  tag: string,
+  compiled: CompiledRule[],
+): { rule: CompiledRule; to: string } | null {
+  let best: CompiledRule | null = null;
+  for (const rule of compiled) {
+    if (!tagMatches(tag, rule.source)) continue;
+    if (!best || rule.source.length > best.source.length) best = rule;
+  }
+  if (!best) return null;
+  return { rule: best, to: normalizeTag(best.target + tag.slice(best.source.length)) };
+}
+
+/**
+ * Preview a whole table of renames (task 7p).
+ *
+ * `affected` counts distinct bookmarks, not the sum of the per-row counts: one bookmark tagged
+ * both `dev` and `readinglist` is rewritten once by a batch that renames both, and reporting
+ * "2 bookmarks affected" for a collection of one would be a lie at exactly the moment the user
+ * is deciding whether to trust the button.
+ */
+export function planBatchRename(bookmarks: Bookmark[], rules: RenameRule[]): BatchRenamePlan {
+  const { compiled, problems } = compileRules(rules);
+
+  const affectedByRule = new Map<number, number>();
+  const examplesByRule = new Map<number, { from: string; to: string }[]>();
+  const collisionsByRule = new Map<number, Set<string>>();
+  let affected = 0;
+
+  const collide = (index: number, tag: string) => {
+    const owner = collisionsByRule.get(index) ?? new Set<string>();
+    owner.add(tag);
+    collisionsByRule.set(index, owner);
+  };
+
+  for (const b of bookmarks) {
+    if (b.deletedAt) continue;
+
+    const touched = new Set<number>();
+    // Tags no rule renames. A rename landing on one of these is a merge, not a move.
+    const untouched = new Set<string>();
+    const produced = new Map<string, number>();
+
+    for (const tag of b.tags) {
+      const hit = rewriteTag(tag, compiled);
+      if (!hit) {
+        untouched.add(tag);
+        continue;
+      }
+      touched.add(hit.rule.index);
+
+      const examples = examplesByRule.get(hit.rule.index) ?? [];
+      if (examples.length < 5 && !examples.some((e) => e.from === tag)) {
+        examples.push({ from: tag, to: hit.to });
+        examplesByRule.set(hit.rule.index, examples);
+      }
+
+      // The same tag produced twice means two sources converged — often exactly the point
+      // ("readinglist" and "reading list" both to "reading-list"), but always worth showing.
+      if (produced.has(hit.to)) collide(hit.rule.index, hit.to);
+      produced.set(hit.to, hit.rule.index);
+    }
+
+    // Renames that land on a tag the record already had and keeps. Checked after the loop
+    // because the surviving tag may come later in the list than the rename onto it.
+    for (const [tag, index] of produced) {
+      if (untouched.has(tag)) collide(index, tag);
+    }
+
+    if (touched.size > 0) affected += 1;
+    for (const index of touched) {
+      affectedByRule.set(index, (affectedByRule.get(index) ?? 0) + 1);
+    }
+  }
+
+  const rows: BatchRenameRow[] = rules.map((rule, index) => {
+    const count = affectedByRule.get(index) ?? 0;
+    const problem = problems[index] ?? null;
+    return {
+      index,
+      source: normalizeTag(rule.from),
+      target: normalizeTag(rule.to),
+      affected: count,
+      examples: examplesByRule.get(index) ?? [],
+      collisions: [...(collisionsByRule.get(index) ?? [])].sort(),
+      // A complete row matching nothing is worth saying so: it is almost always a typo in a
+      // tag name, and the alternative is a silent no-op the user reads as success.
+      problem: problem ?? (count === 0 ? "no-match" : null),
+    };
+  });
+
+  return {
+    rows,
+    affected,
+    applicable: rows.filter((r) => r.problem === null).length,
+  };
+}
+
+/**
+ * Apply a table of renames in one pass.
+ *
+ * Shares `compileRules` and `rewriteTag` with the plan, which is the point: a preview computed
+ * by different code from the operation it previews is a preview of nothing.
+ */
+export function applyBatchRename(
+  bookmarks: Bookmark[],
+  rules: RenameRule[],
+  now: string,
+): Bookmark[] {
+  const { compiled } = compileRules(rules);
+  if (compiled.length === 0) return bookmarks;
+
+  let changed = false;
+  const next = bookmarks.map((b) => {
+    if (b.deletedAt) return b;
+    if (!b.tags.some((t) => rewriteTag(t, compiled))) return b;
+
+    changed = true;
+    // normalizeTags sorts and dedupes, so converging renames merge here rather than leaving
+    // the same tag on one record twice.
+    const tags = normalizeTags(b.tags.map((t) => rewriteTag(t, compiled)?.to ?? t));
+    return { ...b, tags, updatedAt: now };
+  });
+
+  // Identity return when nothing matched, so callers can skip the write entirely.
+  return changed ? next : bookmarks;
+}

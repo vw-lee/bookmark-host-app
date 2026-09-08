@@ -18,6 +18,8 @@
   import TagTree from "./lib/ui/TagTree.svelte";
   import QuickAdd from "./lib/ui/QuickAdd.svelte";
   import StatusBar from "./lib/ui/StatusBar.svelte";
+  import SyncBadge from "./lib/ui/SyncBadge.svelte";
+  import StatusIcon from "./lib/ui/StatusIcon.svelte";
   import Settings from "./lib/ui/Settings.svelte";
   import ImportExport from "./lib/ui/ImportExport.svelte";
   import BulkTools from "./lib/ui/BulkTools.svelte";
@@ -133,6 +135,34 @@
     });
   }
 
+  /**
+   * Turn to another page of bookmarks (task 7o).
+   *
+   * Three things have to happen together, and missing any one of them makes paging by keyboard
+   * feel broken:
+   *
+   *  1. The page changes.
+   *  2. The list scrolls back to its top. Landing on page 3 still scrolled halfway down looks
+   *     exactly like nothing happened, because the rows under the cursor all changed at once.
+   *  3. The keyboard cursor moves to the first row — but only if it was already in the list.
+   *     Pulling focus into the list for someone who was paging with the mouse would silently
+   *     arm `Delete` and `e` against a row they never chose.
+   */
+  function goToPage(next: number) {
+    const target = Math.min(store.pageCount - 1, Math.max(0, next));
+    const moved = target !== store.page;
+    store.page = target;
+    if (moved && focusedIndex >= 0) focusedIndex = 0;
+
+    // After the page state settles, so the region scrolls with the new rows in place.
+    // `scrollTop` rather than `scrollTo`: it is a plain property with no smooth-scroll
+    // behaviour to suppress on e-ink (§1.2), and it needs no capability check.
+    requestAnimationFrame(() => {
+      const region = document.getElementById("bookmark-list");
+      if (region) region.scrollTop = 0;
+    });
+  }
+
   const focused = $derived(focusedIndex >= 0 ? store.pageItems[focusedIndex] : undefined);
 
   function onKeydown(event: KeyboardEvent) {
@@ -185,8 +215,44 @@
       return;
     }
 
-    // Below here: list navigation, which only makes sense with a list on screen.
-    if (!appShell || store.pageItems.length === 0) return;
+    // Below here: the list. Paging comes first because it is the only group that still makes
+    // sense on an empty page — it is how you get off one.
+    if (!appShell) return;
+
+    /*
+     * Page Up / Page Down turn the page; Home / End jump to the first and last (task 7o).
+     *
+     * These override the browser's scroll-by-a-screenful, which they can afford to: the list
+     * lives in a fixed-height region (D18) sized so a page is roughly a screenful already, so
+     * the default was scrolling a box that mostly had nothing left to scroll. Turning the page
+     * is what the key was reaching for in the first place.
+     *
+     * Both still fall through to the browser inside a text field, via the `inField` guard
+     * above — Page Up in a long note has to keep meaning Page Up.
+     */
+    if (event.key === "PageDown") {
+      event.preventDefault();
+      goToPage(store.page + 1);
+      return;
+    }
+    if (event.key === "PageUp") {
+      event.preventDefault();
+      goToPage(store.page - 1);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      goToPage(0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      goToPage(store.pageCount - 1);
+      return;
+    }
+
+    // Below here: list navigation, which needs a row to act on.
+    if (store.pageItems.length === 0) return;
 
     if (event.key === "j" || event.key === "ArrowDown") {
       event.preventDefault();
@@ -310,21 +376,13 @@
         Add
       </button>
 
-      <span
-        class="w-28 text-right text-xs text-[var(--color-ink-soft)]"
-        role="status"
-        aria-live="polite"
-      >
-        {#if store.syncing}
-          Syncing…
-        {:else if store.pendingCount > 0}
-          {store.pendingCount} queued
-        {:else if store.offline}
-          Offline
-        {:else if store.lastSyncedAt}
-          Synced
-        {/if}
-      </span>
+      <!--
+        One glyph and one word, with the detail a click away (task 7n). The chain of {#if}
+        this replaces could not name an expired token, a full file, or a collection that had
+        never connected at all — every one of those rendered as blank space that read as
+        "fine". See syncStatus.ts for the ranking.
+      -->
+      <SyncBadge />
 
       <ViewSwitcher />
 
@@ -377,17 +435,46 @@
 
     <SelectionBar />
 
+    <!--
+      Not connected is the one banner that was easy to miss, and the most expensive to miss:
+      every edit made under it lives on this device only. It had the same weight as the
+      dismissible "updated from another device" notice — quiet grey text, an underlined word
+      for a button.
+
+      So it is given the treatment the severity earns: a thick coloured edge, the same cross
+      glyph the badge shows, a bold first line stating the consequence, and Reconnect as a
+      filled button rather than a link. Offline stays amber and self-resolving; genuinely
+      disconnected is red, because only the user can fix it.
+    -->
     {#if !store.connected}
-      <p class="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-2 text-sm">
+      <div
+        class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-[var(--color-border)] border-l-4 px-4 py-2.5 text-sm
+          {store.offline
+          ? 'border-l-[var(--color-warn)] bg-[color-mix(in_srgb,var(--color-warn)_10%,var(--color-surface))]'
+          : 'border-l-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,var(--color-surface))]'}"
+        role="status"
+        aria-live="polite"
+      >
+        <span class={store.offline ? "text-[var(--color-warn)]" : "text-[var(--color-danger)]"}>
+          <StatusIcon icon="cross" size="1rem" />
+        </span>
         {#if store.offline}
           <!-- Offline is a state to wait out, not a setup to redo — no token is needed here. -->
-          Offline — showing the copy saved on this device. Changes sync when the connection
-          comes back.
+          <strong class="font-semibold">Offline — changes are saved on this device only.</strong>
+          <span class="text-[var(--color-ink-soft)]">They sync when the connection comes back.</span>
         {:else}
-          Not connected to GitHub — showing the copy saved on this device.
-          <button class="underline" onclick={() => (store.wantsSetup = true)}>Reconnect</button>
+          <strong class="font-semibold">Not connected to GitHub — nothing is being backed up.</strong>
+          <span class="text-[var(--color-ink-soft)]">
+            You are seeing the copy saved on this device.
+          </span>
+          <button
+            class="rounded bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-white"
+            onclick={() => (store.wantsSetup = true)}
+          >
+            Reconnect
+          </button>
         {/if}
-      </p>
+      </div>
     {/if}
 
     {#if errorMessage}

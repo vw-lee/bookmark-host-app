@@ -39,7 +39,10 @@ import {
   applyDedupe,
   applyRename,
   applyDeleteTag,
+  applyBatchRename,
+  planBatchRename,
   type DuplicateGroup,
+  type RenameRule,
 } from "./io/bulk";
 import { saveMirror, loadMirror, clearMirror, type MirrorState } from "./sync/db";
 import { withWriteLock, announce, onTabMessage } from "./sync/tabs";
@@ -929,6 +932,42 @@ export class AppStore {
     this.file = { ...this.file, updatedAt: now, bookmarks };
     if (this.selectedTag && this.selectedTag.startsWith(tag)) this.selectedTag = null;
     this.scheduleFlush();
+  }
+
+  /**
+   * Rename several tags at once, as one action (task 7p).
+   *
+   * Undoable, unlike the single rename above it. That asymmetry is deliberate: one rename is a
+   * decision the user can hold in their head and repeat by hand if it was wrong, while a batch
+   * is the tool people reach for after an import — a dozen rules over hundreds of records,
+   * where "that was not what I meant" needs an answer better than editing them back one by one.
+   *
+   * Returns the number of bookmarks rewritten, so the panel can report what happened rather
+   * than claiming success for a batch that matched nothing.
+   */
+  renameTagsBatch(rules: RenameRule[]): number {
+    const now = new Date().toISOString();
+    const bookmarks = applyBatchRename(this.file.bookmarks, rules, now);
+    if (bookmarks === this.file.bookmarks) return 0;
+
+    const plan = planBatchRename(this.file.bookmarks, rules);
+    this.remember(
+      `Renamed ${plan.applicable} tag${plan.applicable === 1 ? "" : "s"} across ${AppStore.plural(plan.affected)}`,
+    );
+
+    this.file = { ...this.file, updatedAt: now, bookmarks };
+
+    // A sidebar filter on a tag that no longer exists shows an empty list with no explanation.
+    // Checked against every rule, because any of them could have moved the selected tag.
+    if (this.selectedTag) {
+      const gone = plan.rows.some(
+        (row) => row.problem === null && tagMatches(this.selectedTag!, row.source),
+      );
+      if (gone) this.selectedTag = null;
+    }
+
+    this.scheduleFlush();
+    return plan.affected;
   }
 
   // ------------------------------------------------------------------- writes

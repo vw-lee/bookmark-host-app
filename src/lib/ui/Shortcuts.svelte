@@ -46,6 +46,15 @@
       ],
     },
     {
+      title: "Turning pages",
+      rows: [
+        ["Page Down", "Next page of bookmarks"],
+        ["Page Up", "Previous page"],
+        ["Home", "First page"],
+        ["End", "Last page"],
+      ],
+    },
+    {
       title: "Finding things",
       rows: [
         ["/", "Jump to search"],

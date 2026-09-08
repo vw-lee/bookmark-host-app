@@ -2,12 +2,15 @@
   /**
    * Bulk dedupe and tag operations (tasks 4e, 4f).
    *
-   * Everything here previews before it applies. These operations rewrite hundreds of records
-   * at once and cannot be undone from inside the app — though because the store is git, the
-   * previous state is always one revert away in the repository.
+   * Everything here previews before it applies. Dedupe and the single tag operations rewrite
+   * hundreds of records at once and cannot be undone from inside the app — though because the
+   * store is git, the previous state is always one revert away in the repository. Batch rename
+   * (7p) is the exception: it takes an undo entry, because it is the one people run a dozen
+   * rules through at once, straight after an import.
    */
   import { store } from "../store.svelte";
   import { planRename, planDeleteTag, type TagPlan } from "../io/bulk";
+  import BatchTagRename from "./BatchTagRename.svelte";
 
   interface Props {
     onClose: () => void;
@@ -139,6 +142,8 @@
         <p class="mt-2 text-xs text-[var(--color-ink-soft)]">Nothing matches that tag.</p>
       {/if}
     </section>
+
+    <BatchTagRename onDone={(message) => (done = message)} />
 
     <section class="mt-6 border-t border-[var(--color-border)] pt-4">
       <h3 class="text-sm font-medium">Remove a tag</h3>

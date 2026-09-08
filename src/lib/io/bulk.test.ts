@@ -6,6 +6,8 @@ import {
   applyRename,
   planDeleteTag,
   applyDeleteTag,
+  planBatchRename,
+  applyBatchRename,
 } from "./bulk";
 import type { Bookmark } from "../schema/types";
 
@@ -167,5 +169,168 @@ describe("planDeleteTag / applyDeleteTag (4f)", () => {
 
   it("reports what it would affect", () => {
     expect(planDeleteTag(collection, "dev").affected).toBe(2);
+  });
+});
+
+describe("planBatchRename / applyBatchRename (7p)", () => {
+  const collection = [
+    b("01A", { tags: ["readinglist", "dev"] }),
+    b("01B", { tags: ["reading list"] }),
+    b("01C", { tags: ["dev/rust", "keep"] }),
+    b("01D", { tags: ["development"] }),
+    b("01E", { tags: ["gone"], deletedAt: NOW }),
+  ];
+
+  it("applies several renames in one pass", () => {
+    const out = applyBatchRename(
+      collection,
+      [
+        { from: "readinglist", to: "reading-list" },
+        { from: "dev", to: "engineering" },
+      ],
+      NOW,
+    );
+    expect(out[0]!.tags).toEqual(["engineering", "reading-list"]);
+    expect(out[2]!.tags).toEqual(["engineering/rust", "keep"]);
+  });
+
+  it("counts distinct bookmarks, not the sum of the rows", () => {
+    // 01A carries both source tags. Summing the per-row counts would report 3.
+    const plan = planBatchRename(collection, [
+      { from: "readinglist", to: "reading-list" },
+      { from: "dev", to: "engineering" },
+    ]);
+    expect(plan.rows[0]!.affected).toBe(1);
+    expect(plan.rows[1]!.affected).toBe(2);
+    expect(plan.affected).toBe(2);
+  });
+
+  /**
+   * The rule the whole design rests on. Sequential application would turn `dev` into `eng`
+   * via `engineering`, which no preview could honestly show — the result would depend on the
+   * order of two rows the user thinks of as independent.
+   */
+  it("never chains one rename into the next", () => {
+    const out = applyBatchRename(
+      collection,
+      [
+        { from: "dev", to: "engineering" },
+        { from: "engineering", to: "eng" },
+      ],
+      NOW,
+    );
+    expect(out[0]!.tags).toContain("engineering");
+    expect(out[0]!.tags).not.toContain("eng");
+  });
+
+  it("is indifferent to row order", () => {
+    const rules = [
+      { from: "dev", to: "engineering" },
+      { from: "readinglist", to: "reading-list" },
+    ];
+    const forward = applyBatchRename(collection, rules, NOW);
+    const reversed = applyBatchRename(collection, [...rules].reverse(), NOW);
+    expect(forward.map((x) => x.tags)).toEqual(reversed.map((x) => x.tags));
+  });
+
+  it("lets the most specific source win over a parent rule", () => {
+    const out = applyBatchRename(
+      collection,
+      [
+        { from: "dev", to: "engineering" },
+        { from: "dev/rust", to: "languages/rust" },
+      ],
+      NOW,
+    );
+    // 01C's dev/rust takes the specific rule; 01A's bare dev takes the general one.
+    expect(out[2]!.tags).toEqual(["keep", "languages/rust"]);
+    expect(out[0]!.tags).toContain("engineering");
+  });
+
+  it("carries whole subtrees", () => {
+    const out = applyBatchRename(collection, [{ from: "dev", to: "engineering" }], NOW);
+    expect(out[2]!.tags).toContain("engineering/rust");
+  });
+
+  it("leaves a prefix-sharing sibling alone", () => {
+    const out = applyBatchRename(collection, [{ from: "dev", to: "engineering" }], NOW);
+    expect(out[3]!.tags).toEqual(["development"]);
+  });
+
+  it("never touches a tombstoned record", () => {
+    const out = applyBatchRename(collection, [{ from: "gone", to: "here" }], NOW);
+    expect(out[4]!.tags).toEqual(["gone"]);
+    expect(out).toBe(collection);
+  });
+
+  it("merges converging renames into one tag, and says so first", () => {
+    const rules = [
+      { from: "readinglist", to: "reading-list" },
+      { from: "reading list", to: "reading-list" },
+    ];
+    const plan = planBatchRename(collection, rules);
+    expect(plan.applicable).toBe(2);
+
+    const out = applyBatchRename(collection, rules, NOW);
+    expect(out[0]!.tags).toContain("reading-list");
+    expect(out[1]!.tags).toEqual(["reading-list"]);
+  });
+
+  it("flags a rename that lands on a tag the record already has", () => {
+    const one = [b("01F", { tags: ["dev", "engineering"] })];
+    const plan = planBatchRename(one, [{ from: "dev", to: "engineering" }]);
+    expect(plan.rows[0]!.collisions).toEqual(["engineering"]);
+
+    const out = applyBatchRename(one, [{ from: "dev", to: "engineering" }], NOW);
+    expect(out[0]!.tags).toEqual(["engineering"]);
+  });
+
+  it("explains every row that will do nothing", () => {
+    const plan = planBatchRename(collection, [
+      { from: "", to: "" },
+      { from: "Dev", to: "dev" },
+      { from: "dev", to: "engineering" },
+      { from: "dev", to: "something-else" },
+      { from: "nosuchtag", to: "whatever" },
+    ]);
+    expect(plan.rows.map((r) => r.problem)).toEqual([
+      "empty",
+      // normalizeTag only lowercases, so both sides land on "dev": already satisfied.
+      "same",
+      null,
+      "duplicate",
+      "no-match",
+    ]);
+    expect(plan.applicable).toBe(1);
+  });
+
+  it("ignores a duplicate source rather than letting it win", () => {
+    const out = applyBatchRename(
+      collection,
+      [
+        { from: "dev", to: "engineering" },
+        { from: "dev", to: "something-else" },
+      ],
+      NOW,
+    );
+    expect(out[0]!.tags).toContain("engineering");
+    expect(out[0]!.tags).not.toContain("something-else");
+  });
+
+  it("returns the same array when nothing matches, so no write is queued", () => {
+    expect(applyBatchRename(collection, [{ from: "nope", to: "nah" }], NOW)).toBe(collection);
+    expect(applyBatchRename(collection, [], NOW)).toBe(collection);
+  });
+
+  it("previews the tag-level changes it will make", () => {
+    const plan = planBatchRename(collection, [{ from: "dev", to: "engineering" }]);
+    expect(plan.rows[0]!.examples).toContainEqual({ from: "dev", to: "engineering" });
+    expect(plan.rows[0]!.examples).toContainEqual({ from: "dev/rust", to: "engineering/rust" });
+  });
+
+  it("stamps updatedAt only on the records it changed", () => {
+    const out = applyBatchRename(collection, [{ from: "dev", to: "engineering" }], NOW);
+    expect(out[0]!.updatedAt).toBe(NOW);
+    expect(out[3]!.updatedAt).not.toBe(NOW);
   });
 });

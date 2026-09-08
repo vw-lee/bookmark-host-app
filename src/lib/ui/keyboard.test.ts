@@ -172,3 +172,111 @@ describe("shortcuts stay out of the way while typing", () => {
     expect(document.querySelector('[role="dialog"][aria-label="Keyboard shortcuts"]')).toBeNull();
   });
 });
+
+/**
+ * Turning pages from the keyboard (task 7o).
+ *
+ * These keys override the browser's scroll-by-a-screenful, so the tests that matter most are
+ * the two about restraint: they must not fire inside a text field, and they must not drag the
+ * keyboard cursor into a list the user was only paging through with the mouse — which would
+ * silently arm Delete and `e` against a row they never chose.
+ */
+describe("page turning (task 7o)", () => {
+  /** Six bookmarks over three pages, which is enough to have a middle to stop in. */
+  async function paged(): Promise<HTMLElement> {
+    const target = await app();
+    for (let i = 0; i < 4; i++) {
+      store.addBookmark({ url: `https://c.example/${i}`, title: `Gamma ${i}` });
+    }
+    store.pageSize = 2;
+    store.page = 0;
+    flushSync();
+    return target;
+  }
+
+  it("turns forward and back", async () => {
+    await paged();
+    expect(store.pageCount).toBe(3);
+
+    press("PageDown");
+    expect(store.page).toBe(1);
+
+    press("PageDown");
+    expect(store.page).toBe(2);
+
+    press("PageUp");
+    expect(store.page).toBe(1);
+  });
+
+  it("stops at the ends rather than wrapping", async () => {
+    await paged();
+    press("PageUp");
+    expect(store.page).toBe(0);
+
+    press("End");
+    press("PageDown");
+    expect(store.page).toBe(store.pageCount - 1);
+  });
+
+  it("jumps to the first and last page with Home and End", async () => {
+    await paged();
+    press("End");
+    expect(store.page).toBe(2);
+
+    press("Home");
+    expect(store.page).toBe(0);
+  });
+
+  it("carries the keyboard cursor to the top of the new page", async () => {
+    const target = await paged();
+    press("j");
+    press("j");
+    const second = focusedTitle(target);
+
+    press("PageDown");
+    expect(store.page).toBe(1);
+    // A cursor left on index 1 would mean j and k resumed from the wrong row.
+    expect(focusedTitle(target)).not.toBe(second);
+    expect(focusedTitle(target)).toContain(store.pageItems[0]!.title);
+  });
+
+  it("does not pull the cursor into the list for someone who never entered it", async () => {
+    const target = await paged();
+    expect(focusedTitle(target)).toBeNull();
+
+    press("PageDown");
+    expect(store.page).toBe(1);
+    expect(focusedTitle(target)).toBeNull();
+  });
+
+  it("leaves the keys alone inside a text field", async () => {
+    const target = await paged();
+    const search = target.querySelector('input[aria-label="Search bookmarks"]') as HTMLInputElement;
+    search.focus();
+
+    for (const key of ["PageDown", "PageUp", "Home", "End"]) press(key, search);
+    expect(store.page).toBe(0);
+  });
+
+  it("still works on a page with nothing on it", async () => {
+    // The only way off an empty page is a paging key, so these run before the guard that
+    // requires a row to act on.
+    await paged();
+    press("End");
+    store.query = "nothing matches this";
+    flushSync();
+
+    press("PageDown");
+    press("Home");
+    expect(store.page).toBe(0);
+  });
+
+  it("lists the paging keys in the shortcut dialog", async () => {
+    await app();
+    press("?");
+    const text =
+      document.querySelector('[role="dialog"][aria-label="Keyboard shortcuts"]')?.textContent ?? "";
+    expect(text).toContain("Page Down");
+    expect(text).toContain("Next page of bookmarks");
+  });
+});
