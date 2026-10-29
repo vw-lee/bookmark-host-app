@@ -642,9 +642,9 @@ Honest limits, so nothing here reads as a stronger claim than it is:
 * **7q — verified by CI, not locally.** The tag sidebar filter was authored on a machine with
   no Node installation, so `npm run verify` has never run for it locally. The first CI run
   passed lint, typecheck and 436 of 438 tests; the two failures were in `tagTree.test.ts`'s
-  own parsing of a tooltip, not in the component, and are fixed in the following commit. Like
-  7n and 7p, nothing has confirmed how the dimmed-italic context rows or the `↵` marker read on
-  a real screen.
+  own parsing of a tooltip, not in the component; after the fix the rerun was fully green —
+  438 of 438. Like 7n and 7p, nothing has confirmed how the dimmed-italic context rows or the
+  `↵` marker read on a real screen.
 * **Deployment.** The Pages workflow is written and the build is verified locally, but Pages
   has not been enabled and nothing has been pushed.
 * **The Phase 6 workflows** run correctly against live sites locally; they have not run inside
