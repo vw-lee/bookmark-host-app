@@ -58,6 +58,8 @@
   let installDismissed = $state(false);
   let sharedNotice = $state<string | null>(null);
   let searchInput = $state<HTMLInputElement | null>(null);
+  // The sidebar's tag filter box (7q), bound up from TagTree so `t` can land in it.
+  let tagFilterInput = $state<HTMLInputElement | null>(null);
 
   // Applied before anything paints, so there is no flash of the wrong theme.
   $effect(() => {
@@ -201,6 +203,12 @@
     if (event.key === "/") {
       event.preventDefault();
       searchInput?.focus();
+      return;
+    }
+    // `t` jumps to the tag filter (7q), the sidebar's counterpart to `/` for the search box.
+    if (event.key.toLowerCase() === "t") {
+      event.preventDefault();
+      tagFilterInput?.focus();
       return;
     }
     if (event.key === "?") {
@@ -494,6 +502,7 @@
           selected={store.selectedTag}
           totalCount={total}
           onSelect={(tag) => (store.selectedTag = tag)}
+          bind:filterInput={tagFilterInput}
         />
 
         <main class="flex min-h-0 flex-1 flex-col" aria-label="Bookmarks">

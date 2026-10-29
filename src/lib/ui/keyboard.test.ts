@@ -165,7 +165,7 @@ describe("shortcuts stay out of the way while typing", () => {
     search.focus();
 
     // Every one of these is a shortcut outside a field and an ordinary character inside one.
-    for (const key of ["j", "k", "v", "x", "e", "?", "/"]) press(key, search);
+    for (const key of ["j", "k", "v", "x", "e", "t", "?", "/"]) press(key, search);
 
     expect(focusedTitle(target)).toBeNull();
     expect(store.selection).toHaveLength(0);
@@ -269,6 +269,26 @@ describe("page turning (task 7o)", () => {
     press("PageDown");
     press("Home");
     expect(store.page).toBe(0);
+  });
+
+  /**
+   * The tag filter shortcut (task 7q). `t` is the sidebar's `/`: it only has somewhere to land
+   * once a tag exists, so the test tags a bookmark first.
+   */
+  it("focuses the tag filter on t and lists the key in the dialog", async () => {
+    const target = await app();
+    store.addBookmark({ url: "https://c.example/3", title: "Gamma", tags: ["dev"] });
+    flushSync();
+
+    press("t");
+    const filter = target.querySelector('input[aria-label="Filter tags"]');
+    expect(filter).not.toBeNull();
+    expect(document.activeElement).toBe(filter);
+
+    press("?");
+    const text =
+      document.querySelector('[role="dialog"][aria-label="Keyboard shortcuts"]')?.textContent ?? "";
+    expect(text).toContain("Jump to the tag filter");
   });
 
   it("lists the paging keys in the shortcut dialog", async () => {

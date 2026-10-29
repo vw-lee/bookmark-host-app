@@ -110,6 +110,7 @@ before the phase that depends on them begins.
 | D23 | Sync legibility | **BUILT — one glyph and one word, ranked by a pure function, with the detail behind a click** | The header held a chain of `{#if}` in the markup that could name four states and silently rendered *nothing* for three more: an expired token, a file past the 1 MB ceiling, and a collection that had never connected. Blank space where a status belongs reads as "fine", and the worst of those three means every edit is local-only. The ranking now lives in `syncStatus.ts` as a pure function over a snapshot, so all ten states are enumerable and testable without mounting the app. Colour is reinforcement, never the signal — see §14.2. |
 | D24 | Batch tag rename | **BUILT — a table of rules, applied in one pass, longest match wins, undoable** | Tag drift arrives all at once (a browser import lands `readinglist`, `reading list` and `Reading List` as three branches), so the fix has to arrive all at once too — the single rename meant a dozen previews, a dozen applies, and a dozen commits. The load-bearing rule is that rules are never chained: with `dev → engineering` and `engineering → eng` present, a sequential batch would turn `dev` into `eng`, an outcome no preview could honestly show because it depends on row order. One pass with the most specific source winning makes row order irrelevant and the previewed counts exact. |
 | D25 | Paging keys | **BUILT — Page Up/Down turn pages, Home/End jump to first/last** | They override the browser's scroll-by-a-screenful, which they can afford to: the list already lives in a fixed-height region (D18) sized so a page is roughly a screenful, so the default was scrolling a box with little left to scroll. Turning the page is what the key was reaching for. The restraint is in the two guards — they never fire inside a text field, and they never drag the keyboard cursor into a list the user was only paging with the mouse, which would silently arm `Delete` and `e` against a row they never chose. |
+| D26 | Tag sidebar filter | **BUILT — a filter box pinned above the tree; palette fuzzy scoring; ancestors kept as dimmed context; alphabetical order; Enter picks the best match** | The sidebar lists every node and a browser import makes that three hundred. The palette could already find a tag, but it is modal — you lose the tree, and the tree is what tells you `dev/rust` exists before you spell it a second way. So the filter narrows the tree in place. It reuses the palette's `score()` so the two places that find a tag agree on what matches, and it keeps every ancestor of a match so indentation still means something. Order stays alphabetical rather than by score, because ranked children drift away from their parents and the tree shape is the whole point of doing this here. The box narrows what the sidebar *shows*, never which bookmarks are listed — a second field that silently filtered the list by different rules would read as missing data when left non-empty. Model in §14.4. |
 
 ---
 
@@ -614,10 +615,10 @@ been saved, when the value is obvious.
 
 | Area | State |
 |------|-------|
-| Tests | 419 passing across 29 files |
-| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, batch tag rename, palette ranking, sync-status ranking, offline/rate-limit/refresh/pagination, keyboard navigation and paging, domain tiles, sort comparator, view modes, per-view render of the §5.4 unsafe-URL gate |
+| Tests | 419 passing across 29 files as of 7p; 7q adds 19 across 2 new files and 1 case in `keyboard.test.ts`, **not yet run** — see below |
+| Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, batch tag rename, palette ranking, tag sidebar filter, sync-status ranking, offline/rate-limit/refresh/pagination, keyboard navigation and paging, domain tiles, sort comparator, view modes, per-view render of the §5.4 unsafe-URL gate |
 | Bundle | ~245 KB raw / ~73 KB gzipped |
-| Source | ~13,700 lines; largest file 1,142 (limit 2,000) |
+| Source | ~14,200 lines; largest file 1,142 (limit 2,000) |
 | Checks | eslint (incl. `svelte/no-at-html-tags`), svelte-check, CSP assertion — all clean |
 
 Commands: `npm run dev` to develop, `npm test` to test, `npm run verify` before committing.
@@ -638,6 +639,10 @@ Honest limits, so nothing here reads as a stronger claim than it is:
   table are asserted through their pure logic and through mounted-component tests. Nothing has
   confirmed how the badge tones read against the three themes, or how the rename table wraps on
   a phone.
+* **7q — not run at all yet.** The tag sidebar filter was authored on a machine with no Node
+  installation, so `npm run verify` could not be run before its commit. Its tests exist
+  (`tagFilter.test.ts`, `tagTree.test.ts`, one case in `keyboard.test.ts`) and CI runs the full
+  suite on push. Until that run is green, treat the 7q checkmark as "written", not "verified".
 * **Deployment.** The Pages workflow is written and the build is verified locally, but Pages
   has not been enabled and nothing has been pushed.
 * **The Phase 6 workflows** run correctly against live sites locally; they have not run inside
@@ -812,6 +817,9 @@ and the `scripts/` directory across. The app repo keeps them only as the canonic
   first and last (D25). Named on the pager controls, not only in the `?` dialog.
 * [x] **7p.** Batch tag rename — a table of from → to rules, previewed together and applied as
   one undoable change (D24). Model in §14.3.
+* [x] **7q.** Tag sidebar filter — a box pinned above the tree that narrows it as you type,
+  with `t` to focus, Enter to select the marked best match and Escape to clear (D26). Model in
+  §14.4.
 
 ### 14.1 View Modes (7g)
 
@@ -934,6 +942,33 @@ Unlike the single rename beside it, the batch takes an undo entry. That asymmetr
 deliberate — one rename is a decision a person can hold in their head and reverse by hand; a
 dozen rules over hundreds of records needs a better answer than editing them back one at a
 time.
+
+### 14.4 Tag Sidebar Filter (7q, D26)
+
+A text field pinned above the tag tree, beneath "All", so it never scrolls out of reach. Typing
+narrows the tree in place. The logic is a pure function in `tagFilter.ts`; `TagTree.svelte`
+only renders what it returns.
+
+1. **A node matches when the query fuzzy-matches its full path**, using the palette's `score()`
+   (7a): `rust` finds `dev/rust`, and `dra` finds `dev/rust/async` exactly as it would in
+   `Ctrl-K`. Matching the full path also means a parent's query keeps its children for free —
+   `dev/rust` contains `dev` — so the descendant-inclusive reading of §3.3.2 holds here too.
+2. **Ancestors of a match stay visible as context.** They are rendered dimmed *and* italic: on
+   e-ink soft ink is ink (§1.2), so a colour-only cue would vanish. A node that matched on its
+   own merits is never demoted to context, even when it is also someone's parent.
+3. **Order stays alphabetical.** Ranking by score would shuffle children away from their
+   parents, and the tree shape is the reason this lives in the sidebar rather than in the
+   palette. The score is used once, to mark the **best** match with `↵`, which is what Enter
+   selects. Ties go to the alphabetically earlier tag, so the mark is predictable.
+
+Keys: `t` focuses the box from anywhere outside a text field, the sidebar's counterpart to
+`/`. Enter applies the marked tag. Escape clears the box, or leaves it when already empty, and
+is stopped there so the app-level Escape does not also drop the user's selection. All three
+are listed in the `?` dialog.
+
+The filter narrows what the sidebar *shows*, never which bookmarks are listed; selecting a tag
+is still the act that filters. An empty result says `No tags match "…"` rather than showing an
+empty list that could be read as "no tags".
 
 ---
 

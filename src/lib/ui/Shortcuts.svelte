@@ -58,6 +58,7 @@
       title: "Finding things",
       rows: [
         ["/", "Jump to search"],
+        ["t", "Jump to the tag filter — Enter picks the ↵ match, Escape clears"],
         ["Ctrl / ⌘ + K", "Command palette"],
         ["Ctrl / ⌘ + Shift + K", "Add a bookmark"],
         ["v", "Cycle view: list, cards, tiles, table"],
