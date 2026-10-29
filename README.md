@@ -615,7 +615,7 @@ been saved, when the value is obvious.
 
 | Area | State |
 |------|-------|
-| Tests | 419 passing across 29 files as of 7p; 7q adds 19 across 2 new files and 1 case in `keyboard.test.ts`, **not yet run** — see below |
+| Tests | 438 across 31 files — see the 7q note below for the state of the latest run |
 | Coverage focus | merge algorithm, base64 round-trip, URL/tag normalisation, migrations, error taxonomy, token crypto, import parsers, bulk operations, batch tag rename, palette ranking, tag sidebar filter, sync-status ranking, offline/rate-limit/refresh/pagination, keyboard navigation and paging, domain tiles, sort comparator, view modes, per-view render of the §5.4 unsafe-URL gate |
 | Bundle | ~245 KB raw / ~73 KB gzipped |
 | Source | ~14,200 lines; largest file 1,142 (limit 2,000) |
@@ -639,10 +639,12 @@ Honest limits, so nothing here reads as a stronger claim than it is:
   table are asserted through their pure logic and through mounted-component tests. Nothing has
   confirmed how the badge tones read against the three themes, or how the rename table wraps on
   a phone.
-* **7q — not run at all yet.** The tag sidebar filter was authored on a machine with no Node
-  installation, so `npm run verify` could not be run before its commit. Its tests exist
-  (`tagFilter.test.ts`, `tagTree.test.ts`, one case in `keyboard.test.ts`) and CI runs the full
-  suite on push. Until that run is green, treat the 7q checkmark as "written", not "verified".
+* **7q — verified by CI, not locally.** The tag sidebar filter was authored on a machine with
+  no Node installation, so `npm run verify` has never run for it locally. The first CI run
+  passed lint, typecheck and 436 of 438 tests; the two failures were in `tagTree.test.ts`'s
+  own parsing of a tooltip, not in the component, and are fixed in the following commit. Like
+  7n and 7p, nothing has confirmed how the dimmed-italic context rows or the `↵` marker read on
+  a real screen.
 * **Deployment.** The Pages workflow is written and the build is verified locally, but Pages
   has not been enabled and nothing has been pushed.
 * **The Phase 6 workflows** run correctly against live sites locally; they have not run inside

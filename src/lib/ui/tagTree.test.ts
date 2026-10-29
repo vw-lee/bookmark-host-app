@@ -70,7 +70,8 @@ function press(root: HTMLElement, key: string): KeyboardEvent {
 
 function shownTags(root: HTMLElement): string[] {
   return [...root.querySelectorAll('ul[aria-label="Tags"] button')].map(
-    (b) => b.getAttribute("title")?.match(/tagged exactly (\S+)/)?.[1] ?? "",
+    // The title reads "1 tagged exactly dev, 3 including nested" — stop at the comma.
+    (b) => b.getAttribute("title")?.match(/tagged exactly ([^,]+),/)?.[1] ?? "",
   );
 }
 
